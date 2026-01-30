@@ -1,8 +1,8 @@
 # ============================================================
-# ClawdBot Docker Compose 配置
-# 
+# OpenClaw Docker Compose 配置
+#
 # 使用方法:
-#   1. 复制 examples/config.example.yaml 到 ~/.clawdbot/config.yaml
+#   1. 复制 examples/config.example.yaml 到 ~/.openclaw/config.yaml
 #   2. 编辑配置文件，填入你的 API Key
 #   3. 运行: docker-compose up -d
 #   4. 查看日志: docker-compose logs -f
@@ -11,12 +11,12 @@
 version: '3.8'
 
 services:
-  clawdbot:
+  openclaw:
     build: .
-    image: clawdbot:latest
-    container_name: clawdbot
+    image: openclaw:latest
+    container_name: openclaw
     restart: unless-stopped
-    
+
     # 环境变量（可选，优先级高于配置文件）
     environment:
       - TZ=Asia/Shanghai
@@ -24,36 +24,36 @@ services:
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-    
+
     # 端口映射
     ports:
       - "18789:18789"
-    
+
     # 卷挂载
     volumes:
       # 配置和数据持久化
-      - ~/.clawdbot:/root/.clawdbot
+      - ~/.openclaw:/root/.openclaw
       # 可选：挂载自定义技能目录
-      # - ./custom-skills:/root/.clawdbot/skills
-    
+      # - ./custom-skills:/root/.openclaw/skills
+
     # 健康检查
     healthcheck:
-      test: ["CMD", "clawdbot", "health"]
+      test: ["CMD", "openclaw", "health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    
+
     # 日志配置
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
+
     # 网络配置
     networks:
-      - clawdbot-network
+      - openclaw-network
 
   # 可选：Ollama 本地模型服务
   # 取消注释以启用本地 AI 模型
@@ -66,7 +66,7 @@ services:
   #   volumes:
   #     - ollama-data:/root/.ollama
   #   networks:
-  #     - clawdbot-network
+  #     - openclaw-network
   #   deploy:
   #     resources:
   #       reservations:
@@ -76,7 +76,7 @@ services:
   #             capabilities: [gpu]
 
 networks:
-  clawdbot-network:
+  openclaw-network:
     driver: bridge
 
 # volumes:

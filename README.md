@@ -1,4 +1,4 @@
-# 🦞 ClawdBot 一键部署工具
+# 🦞 OpenClaw 一键部署工具
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-1.0.0-blue.svg" alt="Version">
@@ -6,10 +6,10 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
 </p>
 
-> 🚀 一键部署你的私人 AI 助手 ClawdBot，支持多平台多模型配置
+> 🚀 一键部署你的私人 AI 助手 OpenClaw，支持多平台多模型配置
 
 <p align="center">
-  <img src="photo/menu.png" alt="ClawdBot 配置中心" width="600">
+  <img src="photo/menu.png" alt="OpenClaw 配置中心" width="600">
 </p>
 
 ## 📖 目录
@@ -29,7 +29,7 @@
 ### 🤖 多模型支持
 
 <p align="center">
-  <img src="photo/llm.png" alt="AI 模型配置" width="600">
+  <img src="photo/llm.png" alt="OpenClaw AI 模型配置" width="600">
 </p>
 
 **主流服务商:**
@@ -60,10 +60,12 @@
 
 > 💡 **自定义 API 地址**: Anthropic Claude 和 OpenAI GPT 都支持自定义 API 地址，可接入 OneAPI/NewAPI/API 代理等服务。配置时先输入自定义地址，再输入 API Key。
 
+> ⚠️ **重要更新**: 从 v2026.1.9 版本开始，命令已从 `clawdbot` 更改为 `openclaw`，`message` 命令改为子命令格式。
+
 ### 📱 多渠道接入
 
 <p align="center">
-  <img src="photo/social.png" alt="消息渠道配置" width="600">
+  <img src="photo/social.png" alt="OpenClaw 消息渠道配置" width="600">
 </p>
 
 - Telegram Bot
@@ -77,12 +79,12 @@
 ### 🧪 快速测试
 
 <p align="center">
-  <img src="photo/messages.png" alt="快速测试" width="600">
+  <img src="photo/messages.png" alt="OpenClaw 快速测试" width="600">
 </p>
 
 - API 连接测试
 - 渠道连接验证
-- ClawdBot 诊断工具
+- OpenClaw 诊断工具
 
 ### 🧠 核心能力
 - **持久记忆** - 跨对话、跨平台的长期记忆
@@ -105,23 +107,23 @@
 
 ```bash
 # 下载并运行安装脚本
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
 ```
 
 安装脚本会自动：
 1. 检测系统环境并安装依赖
-2. 安装 ClawdBot
+2. 安装 OpenClaw
 3. 引导完成核心配置（AI模型、身份信息）
 4. 测试 API 连接
-5. **自动启动 ClawdBot 服务**
+5. **自动启动 OpenClaw 服务**
 6. 可选打开配置菜单进行详细配置（渠道等）
 
 ### 方式二：手动安装
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/miaoxworld/ClawdBotInstaller.git
-cd ClawdBotInstaller
+git clone https://github.com/miaoxworld/OpenClawInstaller.git
+cd OpenClawInstaller
 
 # 2. 添加执行权限
 chmod +x install.sh config-menu.sh
@@ -134,23 +136,23 @@ chmod +x install.sh config-menu.sh
 
 安装完成后脚本会：
 1. **自动询问是否启动服务**（推荐选择 Y）
-2. 后台启动 ClawdBot Gateway
+2. 后台启动 OpenClaw Gateway
 3. 可选打开配置菜单进行渠道配置
 
 如果需要后续管理：
 
 ```bash
 # 手动启动服务
-source ~/.clawdbot/env && clawdbot gateway
+source ~/.openclaw/env && openclaw gateway
 
 # 后台启动服务
-clawdbot gateway start
+openclaw gateway start
 
 # 运行配置菜单进行详细配置
-bash ~/.clawdbot/config-menu.sh
+bash ~/.openclaw/config-menu.sh
 
 # 或从 GitHub 下载运行
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/config-menu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/config-menu.sh | bash
 ```
 
 ## ⚙️ 详细配置
@@ -160,7 +162,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/c
 运行配置菜单后选择 `[2] AI 模型配置`，可选择多种 AI 提供商：
 
 <p align="center">
-  <img src="photo/llm.png" alt="AI 模型配置界面" width="600">
+  <img src="photo/llm.png" alt="OpenClaw AI 模型配置界面" width="600">
 </p>
 
 #### Anthropic Claude 配置
@@ -168,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/c
 1. 在配置菜单中选择 Anthropic Claude
 2. **先输入自定义 API 地址**（留空使用官方 API）
 3. 输入 API Key（官方 Key 从 [Anthropic Console](https://console.anthropic.com/) 获取）
-4. 选择模型（推荐 Sonnet 4）
+4. 选择模型（推荐 Sonnet 4.5）
 
 > 💡 支持 OneAPI/NewAPI 等第三方代理服务，只需填入对应的 API 地址和 Key
 
@@ -177,7 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/c
 1. 在配置菜单中选择 OpenAI GPT
 2. **先输入自定义 API 地址**（留空使用官方 API）
 3. 输入 API Key（官方 Key 从 [OpenAI Platform](https://platform.openai.com/) 获取）
-4. 选择模型
+4. 选择模型（推荐 GPT-4o）
 
 #### Ollama 本地模型
 
@@ -186,7 +188,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/c
 curl -fsSL https://ollama.ai/install.sh | sh
 
 # 2. 下载模型
-ollama pull llama3
+ollama pull llama3.3
 
 # 3. 在配置菜单中选择 Ollama
 # 输入服务地址：http://localhost:11434
@@ -197,14 +199,14 @@ ollama pull llama3
 1. 访问 [Groq Console](https://console.groq.com/) 获取 API Key
 2. 在配置菜单中选择 Groq
 3. 输入 API Key
-4. 选择模型（推荐 llama-3.3-70b-versatile）
+4. 选择模型（推荐 llama-3.3-70b-versatile 或 llama-4）
 
 #### Google Gemini
 
-1. 访问 [Google AI Studio](https://makersuite.google.com/app/apikey) 获取 API Key
+1. 访问 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取 API Key
 2. 在配置菜单中选择 Google Gemini
 3. 输入 API Key
-4. 选择模型（推荐 gemini-2.0-flash）
+4. 选择模型（推荐 gemini-2.0-flash 或 gemini-2.5-pro）
 
 ### 配置 Telegram 机器人
 
@@ -247,72 +249,102 @@ ollama pull llama3
 
 ```bash
 # 启动服务（后台守护进程）
-clawdbot gateway start
+openclaw gateway start
 
 # 停止服务
-clawdbot gateway stop
+openclaw gateway stop
 
-# 重启服务
-clawdbot gateway restart
+# 查看服务状态（表格格式，包含 OS/update/gateway/daemon/agents/sessions）
+openclaw status
 
-# 查看服务状态
-clawdbot gateway status
+# 查看完整状态报告
+openclaw status --all
 
 # 前台运行（用于调试）
-clawdbot gateway
+openclaw gateway --port 18789 --verbose
 
 # 查看日志
-clawdbot logs
+openclaw logs
 
 # 实时日志
-clawdbot logs --follow
+openclaw logs --follow
 ```
 
 ### 配置管理
 
 ```bash
 # 打开配置文件
-clawdbot config
+openclaw config
 
 # 运行配置向导
-clawdbot onboard
+openclaw onboard --install-daemon
 
 # 诊断配置问题
-clawdbot doctor
+openclaw doctor
 
 # 健康检查
-clawdbot health
+openclaw health
+```
+
+### 消息发送（v2026.1.9+ 新格式）
+
+```bash
+# 发送消息（必须指定 provider，除非只配置了一个）
+openclaw message send --to +1234567890 --message "Hello" --provider <provider>
+
+# 轮询消息
+openclaw message poll --provider <provider>
+```
+
+### Agent 交互
+
+```bash
+# 与助手对话
+openclaw agent --message "Ship checklist" --thinking high
+
+# 本地测试
+openclaw agent --local --to "+1234567890" --message "Test message"
+```
+
+### 更新命令（v2026.1.10+ 新增）
+
+```bash
+# 更新到最新版本
+openclaw update
+
+# 或简写形式
+openclaw --update
 ```
 
 ### 数据管理
 
 ```bash
 # 导出对话历史
-clawdbot export --format json
+openclaw export --format json
 
 # 清理记忆
-clawdbot memory clear
+openclaw memory clear
 
 # 备份数据
-clawdbot backup
+openclaw backup
 ```
 
 ## 📋 配置说明
 
-ClawdBot 使用以下配置方式：
+OpenClaw 使用以下配置方式：
 
-- **环境变量**: `~/.clawdbot/env` - 存储 API Key 和 Base URL
-- **ClawdBot 配置**: `~/.clawdbot/clawdbot.json` - ClawdBot 内部配置（自动管理）
-- **命令行工具**: `clawdbot config set` / `clawdbot models set` 等
+- **环境变量**: `~/.openclaw/env` - 存储 API Key 和 Base URL
+- **OpenClaw 配置**: `~/.openclaw/openclaw.json` - OpenClaw 内部配置（自动管理）
+- **命令行工具**: `openclaw config set` / `openclaw models set` 等
 
 > 💡 **注意**：配置主要通过安装向导或 `config-menu.sh` 完成，无需手动编辑配置文件
 
 ### 环境变量配置示例
 
-`~/.clawdbot/env` 文件内容：
+`~/.openclaw/env` 文件内容：
 
 ```bash
-# ClawdBot 环境变量配置
+# OpenClaw 环境变量配置
 export ANTHROPIC_API_KEY=sk-ant-xxxxx
 export ANTHROPIC_BASE_URL=https://your-api-proxy.com  # 可选，自定义 API 地址
 
@@ -323,7 +355,7 @@ export OPENAI_BASE_URL=https://your-api-proxy.com/v1  # 可选
 
 ### 自定义 Provider 配置
 
-当使用自定义 API 地址时，安装脚本会自动在 `~/.clawdbot/clawdbot.json` 中配置自定义 Provider：
+当使用自定义 API 地址时，安装脚本会自动在 `~/.openclaw/openclaw.json` 中配置自定义 Provider：
 
 ```json
 {
@@ -351,44 +383,59 @@ export OPENAI_BASE_URL=https://your-api-proxy.com/v1  # 可选
 ### 目录结构
 
 ```
-~/.clawdbot/
-├── clawdbot.json        # ClawdBot 核心配置
+~/.openclaw/
+├── openclaw.json        # OpenClaw 核心配置
 ├── env                  # 环境变量 (API Key 等)
 ├── backups/             # 配置备份
-└── logs/                # 日志文件 (由 ClawdBot 管理)
+└── logs/                # 日志文件 (由 OpenClaw 管理)
 ```
 
 ## 🛡️ 安全建议
 
-> ⚠️ **重要警告**：ClawdBot 需要完全的计算机权限，请务必注意安全！
+> ⚠️ **重要警告**：OpenClaw 需要完全的计算机权限，请务必注意安全！
 
 ### 部署建议
 
 1. **不要在主工作电脑上部署** - 建议使用专用服务器或虚拟机
 2. **使用 AWS/GCP/Azure 免费实例** - 隔离环境更安全
 3. **Docker 部署** - 提供额外的隔离层
+4. **沙箱模式** - 设置 `agents.defaults.sandbox.mode: "non-main"` 运行非主会话在 Docker 沙箱中
 
 ### 权限控制
 
 1. **禁用危险功能**（默认已禁用）
-   ```yaml
-   security:
-     enable_shell_commands: false
-     enable_file_access: false
+   ```json
+   {
+     "security": {
+       "enable_shell_commands": false,
+       "enable_file_access": false
+     }
+   }
    ```
 
-2. **启用沙箱模式**
-   ```yaml
-   security:
-     sandbox_mode: true
+2. **启用沙箱模式**（推荐用于非主会话）
+   ```json
+   {
+     "agents": {
+       "defaults": {
+         "sandbox": {
+           "mode": "non-main"
+         }
+       }
+     }
+   }
    ```
 
-3. **限制允许的用户**
-   ```yaml
-   channels:
-     telegram:
-       allowed_users:
-         - "only-your-user-id"
+3. **DM 配对策略**（防止未知用户访问）
+   ```json
+   {
+     "channels": {
+       "telegram": {
+         "dmPolicy": "pairing",
+         "allowFrom": ["your-user-id"]
+       }
+     }
+   }
    ```
 
 ### API Key 安全
@@ -396,6 +443,7 @@ export OPENAI_BASE_URL=https://your-api-proxy.com/v1  # 可选
 - 定期轮换 API Key
 - 不要在公开仓库中提交配置文件
 - 使用环境变量存储敏感信息
+- 使用 `openclaw doctor` 检查配置安全性
 
 ```bash
 # 使用环境变量
@@ -406,6 +454,8 @@ export TELEGRAM_BOT_TOKEN="xxx"
 ## ❓ 常见问题
 
 ### Q: 安装时提示 Node.js 版本过低？
+
+OpenClaw 需要 Node.js v22 或更高版本。
 
 ```bash
 # macOS
@@ -419,51 +469,69 @@ sudo apt-get install -y nodejs
 
 ### Q: 启动后无法连接？
 
-1. 检查配置文件是否正确
-2. 运行诊断命令：`clawdbot doctor`
-3. 查看日志：`clawdbot logs`
+1. 检查配置文件是否正确 (`~/.openclaw/openclaw.json`)
+2. 运行诊断命令：`openclaw doctor`
+3. 查看日志：`openclaw logs`
+4. 检查健康状态：`openclaw health`
 
 ### Q: Telegram 机器人没有响应？
 
 1. 确认 Bot Token 正确
-2. 确认 User ID 在 allowed_users 列表中
-3. 检查网络连接（可能需要代理）
+2. 确认 User ID 在 `allowFrom` 列表中
+3. 检查 DM 配对策略设置
+4. 检查网络连接（可能需要代理）
+5. 运行 `openclaw channels list` 查看渠道状态
 
 ### Q: 如何更新到最新版本？
 
 ```bash
-# 使用 npm 更新
-npm update -g clawdbot
+# 方法 1: 使用 openclaw update 命令 (v2026.1.10+)
+openclaw update
 
-# 或使用配置菜单
+# 或简写
+openclaw --update
+
+# 方法 2: 使用 npm 更新
+npm update -g openclaw
+
+# 方法 3: 使用配置菜单
 ./config-menu.sh
-# 选择 [7] 高级设置 → [7] 更新 ClawdBot
+# 选择 [7] 高级设置 → [7] 更新 OpenClaw
 ```
 
 ### Q: 如何备份数据？
 
 ```bash
 # 手动备份
-cp -r ~/.clawdbot ~/clawdbot_backup_$(date +%Y%m%d)
+cp -r ~/.openclaw ~/openclaw_backup_$(date +%Y%m%d)
 
 # 使用命令备份
-clawdbot backup
+openclaw backup
 ```
 
 ### Q: 如何完全卸载？
 
 ```bash
 # 停止服务
-clawdbot gateway stop
+openclaw gateway stop
 
 # 卸载程序
-npm uninstall -g clawdbot
+npm uninstall -g openclaw
 
 # 删除配置（可选）
-rm -rf ~/.clawdbot
+rm -rf ~/.openclaw
 ```
 
 ## 📜 更新日志
+
+### v1.1.0 (2026-01-30)
+- 🔄 同步 OpenClaw v2026.1.24 命令变更
+- 📝 命令从 `clawdbot` 更改为 `openclaw`
+- ⚠️ `message` 命令改为子命令格式 `message send|poll|...`
+- ✨ 新增 `openclaw update` 更新命令
+- ✨ 新增 `openclaw status --all` 完整状态报告
+- 🔒 更新安全配置说明（DM 配对策略）
+- 📚 完善文档和常见问题
 
 ### v1.0.0 (2026-01-29)
 - 🎉 首次发布
@@ -480,11 +548,12 @@ rm -rf ~/.clawdbot
 
 ## 🔗 相关链接
 
-- [ClawdBot 官网](https://clawd.bot)
-- [官方文档](https://clawd.bot/docs)
-- [安装工具仓库](https://github.com/miaoxworld/ClawdBotInstaller)
-- [ClawdBot 主仓库](https://github.com/clawdbot/clawdbot)
-- [社区讨论](https://github.com/miaoxworld/ClawdBotInstaller/discussions)
+- [OpenClaw 官网](https://openclaw.ai)
+- [官方文档](https://docs.openclaw.ai)
+- [安装工具仓库](https://github.com/miaoxworld/OpenClawInstaller)
+- [OpenClaw 主仓库](https://github.com/openclaw/openclaw)
+- [社区 Discord](https://discord.gg/clawd)
+- [社区讨论](https://github.com/miaoxworld/OpenClawInstaller/discussions)
 
 ---
 

@@ -1,7 +1,7 @@
 # ============================================================
-# ClawdBot 配置文件示例
-# 复制此文件到 ~/.clawdbot/config.yaml 并修改相关配置
-# 详细文档: https://clawd.bot/docs/config
+# OpenClaw 配置文件示例
+# 复制此文件到 ~/.openclaw/config.yaml 并修改相关配置
+# 详细文档: https://opencode.ai/docs/config
 # ============================================================
 
 # 配置版本
@@ -187,7 +187,7 @@ channels:
   whatsapp:
     enabled: false
     
-    # WhatsApp 使用二维码登录，运行 clawdbot onboard --provider whatsapp
+    # WhatsApp 使用二维码登录，运行 openclaw onboard --provider whatsapp
 
   # ----------------------------------------------------------
   # Slack 配置
@@ -210,14 +210,14 @@ channels:
   # ----------------------------------------------------------
   wechat:
     enabled: false
-    # 微信接入需要额外配置，运行 clawdbot onboard --provider wechat
+    # 微信接入需要额外配置，运行 openclaw onboard --provider wechat
 
   # ----------------------------------------------------------
   # iMessage 配置 (仅 macOS)
   # ----------------------------------------------------------
   imessage:
     enabled: false
-    # 需要完整磁盘访问权限，运行 clawdbot onboard --provider imessage
+    # 需要完整磁盘访问权限，运行 openclaw onboard --provider imessage
 
   # ----------------------------------------------------------
   # 飞书配置 (Feishu/Lark)
@@ -248,7 +248,7 @@ memory:
   enabled: true
   
   # 记忆存储路径
-  storage_path: "~/.clawdbot/data/memory"
+  storage_path: "~/.openclaw/data/memory"
   
   # 最大上下文长度（token）
   max_context_length: 32000
@@ -269,7 +269,7 @@ skills:
   enabled: true
   
   # 技能文件目录
-  path: "~/.clawdbot/skills"
+  path: "~/.openclaw/skills"
   
   # 内置技能开关
   builtin:
@@ -304,7 +304,7 @@ security:
   
   # 文件访问白名单（仅当 enable_file_access 为 true 时生效）
   file_whitelist:
-    - "~/.clawdbot/"
+    - "~/.openclaw/"
     - "~/Documents/"
   
   # 敏感信息过滤
@@ -347,7 +347,7 @@ logging:
   level: "info"
   
   # 日志文件路径
-  path: "~/.clawdbot/logs"
+  path: "~/.openclaw/logs"
   
   # 单个日志文件最大大小
   max_size: "10MB"
