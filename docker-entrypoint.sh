@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONFIG_DIR="/root/.clawdbot"
+CONFIG_DIR="/root/.openclaw"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 
 # 如果配置文件不存在，复制示例配置
@@ -18,7 +18,7 @@ mkdir -p "$CONFIG_DIR/skills"
 
 # 打印启动信息
 echo ""
-echo "🦞 ClawdBot Docker Container"
+echo "🦞 OpenClaw Docker Container"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "配置目录: $CONFIG_DIR"
 echo "日志目录: $CONFIG_DIR/logs"

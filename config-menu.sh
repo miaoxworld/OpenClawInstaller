@@ -2,7 +2,7 @@
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                                                                           ║
-# ║   🦞 ClawdBot 交互式配置菜单 v1.0.0                                        ║
+# ║   🦞 OpenClaw 交互式配置菜单 v1.0.0                                        ║
 # ║   便捷的可视化配置工具                                                      ║
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -50,11 +50,11 @@ BG_GREEN='\033[42m'
 BG_RED='\033[41m'
 
 # ================================ 配置变量 ================================
-CONFIG_DIR="$HOME/.clawdbot"
+CONFIG_DIR="$HOME/.openclaw"
 
-# ClawdBot 环境变量配置
-CLAWDBOT_ENV="$CONFIG_DIR/env"
-CLAWDBOT_JSON="$CONFIG_DIR/clawdbot.json"
+# OpenClaw 环境变量配置
+OPENCLAW_ENV="$CONFIG_DIR/env"
+OPENCLAW_JSON="$CONFIG_DIR/openclaw.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
 
 # ================================ 工具函数 ================================
@@ -68,7 +68,7 @@ print_header() {
     cat << 'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
     ║                                                               ║
-    ║   🦞 ClawdBot 配置中心                                         ║
+    ║   🦞 OpenClaw 配置中心                                         ║
     ║                                                               ║
     ╚═══════════════════════════════════════════════════════════════╝
 EOF
@@ -138,8 +138,8 @@ check_dependencies() {
 backup_config() {
     mkdir -p "$BACKUP_DIR"
     local backup_file="$BACKUP_DIR/env_$(date +%Y%m%d_%H%M%S).bak"
-    if [ -f "$CLAWDBOT_ENV" ]; then
-        cp "$CLAWDBOT_ENV" "$backup_file"
+    if [ -f "$OPENCLAW_ENV" ]; then
+        cp "$OPENCLAW_ENV" "$backup_file"
         echo "$backup_file"
     fi
 }
@@ -147,16 +147,16 @@ backup_config() {
 # 从环境变量文件读取配置
 get_env_value() {
     local key=$1
-    if [ -f "$CLAWDBOT_ENV" ]; then
-        grep "^export $key=" "$CLAWDBOT_ENV" 2>/dev/null | sed 's/.*=//' | tr -d '"'
+    if [ -f "$OPENCLAW_ENV" ]; then
+        grep "^export $key=" "$OPENCLAW_ENV" 2>/dev/null | sed 's/.*=//' | tr -d '"'
     fi
 }
 
 # ================================ 测试功能 ================================
 
-# 检查 ClawdBot 是否已安装
-check_clawdbot_installed() {
-    command -v clawdbot &> /dev/null
+# 检查 OpenClaw 是否已安装
+check_openclaw_installed() {
+    command -v openclaw &> /dev/null
 }
 
 # 重启 Gateway 使渠道配置生效
@@ -165,14 +165,14 @@ restart_gateway_for_channel() {
     log_info "正在重启 Gateway..."
     
     # 先尝试停止
-    clawdbot gateway stop 2>/dev/null || true
-    pkill -f "clawdbot.*gateway" 2>/dev/null || true
+    openclaw gateway stop 2>/dev/null || true
+    pkill -f "openclaw.*gateway" 2>/dev/null || true
     sleep 2
     
     # 加载环境变量
-    if [ -f "$CLAWDBOT_ENV" ]; then
-        source "$CLAWDBOT_ENV"
-        log_info "已加载环境变量: $CLAWDBOT_ENV"
+    if [ -f "$OPENCLAW_ENV" ]; then
+        source "$OPENCLAW_ENV"
+        log_info "已加载环境变量: $OPENCLAW_ENV"
     fi
     
     # 后台启动 Gateway（使用 setsid 完全脱离终端）
@@ -180,17 +180,17 @@ restart_gateway_for_channel() {
     
     # 使用 setsid 创建新会话，确保进程完全独立
     if command -v setsid &> /dev/null; then
-        if [ -f "$CLAWDBOT_ENV" ]; then
-            setsid bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+        if [ -f "$OPENCLAW_ENV" ]; then
+            setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            setsid clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+            setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
         fi
     else
         # 备用方案：nohup + disown
-        if [ -f "$CLAWDBOT_ENV" ]; then
-            nohup bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+        if [ -f "$OPENCLAW_ENV" ]; then
+            nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            nohup clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+            nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
         fi
         disown 2>/dev/null || true
     fi
@@ -198,21 +198,21 @@ restart_gateway_for_channel() {
     sleep 3
     
     # 检查是否启动成功
-    if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+    if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
         log_info "Gateway 已在后台启动！"
         echo ""
-        echo -e "${CYAN}查看日志: ${WHITE}tail -f /tmp/clawdbot-gateway.log${NC}"
-        echo -e "${CYAN}停止服务: ${WHITE}clawdbot gateway stop${NC}"
+        echo -e "${CYAN}查看日志: ${WHITE}tail -f /tmp/openclaw-gateway.log${NC}"
+        echo -e "${CYAN}停止服务: ${WHITE}openclaw gateway stop${NC}"
     else
         log_warn "Gateway 可能未正常启动"
-        echo -e "${YELLOW}请手动启动: source ~/.clawdbot/env && clawdbot gateway${NC}"
+        echo -e "${YELLOW}请手动启动: source ~/.openclaw/env && openclaw gateway${NC}"
     fi
 }
 
-# 检查 ClawdBot Gateway 是否运行
+# 检查 OpenClaw Gateway 是否运行
 check_gateway_running() {
-    if check_clawdbot_installed; then
-        clawdbot health &>/dev/null
+    if check_openclaw_installed; then
+        openclaw health &>/dev/null
         return $?
     fi
     return 1
@@ -229,26 +229,26 @@ test_ai_connection() {
     echo -e "${CYAN}━━━ 测试 AI 配置 ━━━${NC}"
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         return 1
     fi
     
     # 确保环境变量已加载
-    [ -f "$CLAWDBOT_ENV" ] && source "$CLAWDBOT_ENV"
+    [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
     # 显示当前模型配置
     echo -e "${CYAN}当前模型配置:${NC}"
-    clawdbot models status 2>&1 | grep -E "Default|Auth|effective" | head -5
+    openclaw models status 2>&1 | grep -E "Default|Auth|effective" | head -5
     echo ""
     
-    # 使用 clawdbot agent --local 测试
-    echo -e "${YELLOW}运行 clawdbot agent --local 测试...${NC}"
+    # 使用 openclaw agent --local 测试
+    echo -e "${YELLOW}运行 openclaw agent --local 测试...${NC}"
     echo ""
     
     local result
     # 添加 || true 防止命令失败导致函数退出
-    result=$(clawdbot agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
+    result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
     local exit_code=$?
     
     # 过滤掉 Node.js 警告信息
@@ -256,7 +256,7 @@ test_ai_connection() {
     
     echo ""
     if [ $exit_code -eq 0 ] && ! echo "$result" | grep -qiE "error|failed|401|403|Unknown model"; then
-        log_info "ClawdBot AI 测试成功！"
+        log_info "OpenClaw AI 测试成功！"
         echo ""
         # 显示 AI 响应（过滤掉空行）
         local ai_response=$(echo "$result" | grep -v "^$" | head -5)
@@ -266,7 +266,7 @@ test_ai_connection() {
         fi
         return 0
     else
-        log_error "ClawdBot AI 测试失败"
+        log_error "OpenClaw AI 测试失败"
         echo ""
         echo -e "  ${RED}错误信息:${NC}"
         echo "$result" | head -5 | sed 's/^/    /'
@@ -274,17 +274,17 @@ test_ai_connection() {
         
         # 提供修复建议
         if echo "$result" | grep -q "Unknown model"; then
-            echo -e "${YELLOW}提示: 模型不被 ClawdBot 识别${NC}"
-            echo "  运行: clawdbot configure --section model"
+            echo -e "${YELLOW}提示: 模型不被 OpenClaw 识别${NC}"
+            echo "  运行: openclaw configure --section model"
         elif echo "$result" | grep -q "401\|Incorrect API key"; then
             echo -e "${YELLOW}提示: API Key 无效或 Base URL 配置不正确${NC}"
-            echo "  ClawdBot 可能不支持自定义 API 地址"
-            echo "  运行: clawdbot configure --section model"
+            echo "  OpenClaw 可能不支持自定义 API 地址"
+            echo "  运行: openclaw configure --section model"
         fi
         echo ""
         echo "  其他诊断命令:"
-        echo "    clawdbot doctor"
-        echo "    clawdbot models status"
+        echo "    openclaw doctor"
+        echo "    openclaw models status"
         return 1
     fi
 }
@@ -410,7 +410,7 @@ test_telegram_bot() {
     echo ""
     echo -e "${YELLOW}2. 发送测试消息...${NC}"
     
-    local message="🦞 ClawdBot 测试消息
+    local message="🦞 OpenClaw 测试消息
 
 这是一条来自配置工具的测试消息。
 如果你收到这条消息，说明 Telegram 机器人配置成功！
@@ -521,7 +521,7 @@ if len(guilds) > 5:
     
     # 使用单行消息避免 JSON 格式问题
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local message="🦞 **ClawdBot 测试消息** - 配置成功！时间: $timestamp"
+    local message="🦞 **OpenClaw 测试消息** - 配置成功！时间: $timestamp"
     
     # 使用 python 正确编码 JSON
     local json_payload
@@ -650,104 +650,104 @@ test_ollama_connection() {
     fi
 }
 
-# 测试 WhatsApp (通过 clawdbot status)
+# 测试 WhatsApp (通过 openclaw status)
 test_whatsapp() {
     echo ""
     echo -e "${CYAN}━━━ 测试 WhatsApp 连接 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
+    if check_openclaw_installed; then
         echo -e "${YELLOW}检查 WhatsApp 渠道状态...${NC}"
         echo ""
-        clawdbot status 2>/dev/null | grep -i whatsapp || echo "WhatsApp 渠道未配置"
+        openclaw status 2>/dev/null | grep -i whatsapp || echo "WhatsApp 渠道未配置"
         echo ""
-        echo -e "${CYAN}提示: 使用 'clawdbot channels login' 配置 WhatsApp${NC}"
+        echo -e "${CYAN}提示: 使用 'openclaw channels login' 配置 WhatsApp${NC}"
         return 0
     else
-        log_warn "WhatsApp 测试需要 ClawdBot 已安装"
-        echo -e "${YELLOW}请先完成 ClawdBot 安装${NC}"
+        log_warn "WhatsApp 测试需要 OpenClaw 已安装"
+        echo -e "${YELLOW}请先完成 OpenClaw 安装${NC}"
         return 1
     fi
 }
 
-# 测试 iMessage (通过 clawdbot status)
+# 测试 iMessage (通过 openclaw status)
 test_imessage() {
     echo ""
     echo -e "${CYAN}━━━ 测试 iMessage 连接 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
+    if check_openclaw_installed; then
         echo -e "${YELLOW}检查 iMessage 渠道状态...${NC}"
         echo ""
-        clawdbot status 2>/dev/null | grep -i imessage || echo "iMessage 渠道未配置"
+        openclaw status 2>/dev/null | grep -i imessage || echo "iMessage 渠道未配置"
         return 0
     else
-        log_warn "iMessage 测试需要 ClawdBot 已安装"
-        echo -e "${YELLOW}请先完成 ClawdBot 安装${NC}"
+        log_warn "iMessage 测试需要 OpenClaw 已安装"
+        echo -e "${YELLOW}请先完成 OpenClaw 安装${NC}"
         return 1
     fi
 }
 
-# 测试微信 (通过 clawdbot status)
+# 测试微信 (通过 openclaw status)
 test_wechat() {
     echo ""
     echo -e "${CYAN}━━━ 测试微信连接 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
+    if check_openclaw_installed; then
         echo -e "${YELLOW}检查微信渠道状态...${NC}"
         echo ""
-        clawdbot status 2>/dev/null | grep -i wechat || echo "微信渠道未配置"
+        openclaw status 2>/dev/null | grep -i wechat || echo "微信渠道未配置"
         return 0
     else
-        log_warn "微信测试需要 ClawdBot 已安装"
-        echo -e "${YELLOW}请先完成 ClawdBot 安装${NC}"
+        log_warn "微信测试需要 OpenClaw 已安装"
+        echo -e "${YELLOW}请先完成 OpenClaw 安装${NC}"
         return 1
     fi
 }
 
-# 运行 ClawdBot 诊断 (使用 clawdbot doctor)
-run_clawdbot_doctor() {
+# 运行 OpenClaw 诊断 (使用 openclaw doctor)
+run_openclaw_doctor() {
     echo ""
-    echo -e "${CYAN}━━━ ClawdBot 诊断 ━━━${NC}"
+    echo -e "${CYAN}━━━ OpenClaw 诊断 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
-        clawdbot doctor
+    if check_openclaw_installed; then
+        openclaw doctor
         return $?
     else
-        log_error "ClawdBot 未安装"
-        echo -e "${YELLOW}请先运行 install.sh 安装 ClawdBot${NC}"
+        log_error "OpenClaw 未安装"
+        echo -e "${YELLOW}请先运行 install.sh 安装 OpenClaw${NC}"
         return 1
     fi
 }
 
-# 运行 ClawdBot 状态检查 (使用 clawdbot status)
-run_clawdbot_status() {
+# 运行 OpenClaw 状态检查 (使用 openclaw status)
+run_openclaw_status() {
     echo ""
-    echo -e "${CYAN}━━━ ClawdBot 状态 ━━━${NC}"
+    echo -e "${CYAN}━━━ OpenClaw 状态 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
-        clawdbot status
+    if check_openclaw_installed; then
+        openclaw status
         return $?
     else
-        log_error "ClawdBot 未安装"
+        log_error "OpenClaw 未安装"
         return 1
     fi
 }
 
-# 运行 ClawdBot 健康检查 (使用 clawdbot health)
-run_clawdbot_health() {
+# 运行 OpenClaw 健康检查 (使用 openclaw health)
+run_openclaw_health() {
     echo ""
     echo -e "${CYAN}━━━ Gateway 健康检查 ━━━${NC}"
     echo ""
     
-    if check_clawdbot_installed; then
-        clawdbot health
+    if check_openclaw_installed; then
+        openclaw health
         return $?
     else
-        log_error "ClawdBot 未安装"
+        log_error "OpenClaw 未安装"
         return 1
     fi
 }
@@ -762,39 +762,39 @@ show_status() {
     print_divider
     echo ""
     
-    # ClawdBot 服务状态
-    if command -v clawdbot &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} ClawdBot 已安装: $(clawdbot --version 2>/dev/null || echo 'unknown')"
+    # OpenClaw 服务状态
+    if command -v openclaw &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
         
         # 检查服务运行状态
-        if pgrep -f "clawdbot" > /dev/null 2>&1; then
+        if pgrep -f "openclaw" > /dev/null 2>&1; then
             echo -e "  ${GREEN}●${NC} 服务状态: ${GREEN}运行中${NC}"
         else
             echo -e "  ${RED}●${NC} 服务状态: ${RED}已停止${NC}"
         fi
     else
-        echo -e "  ${RED}✗${NC} ClawdBot 未安装"
+        echo -e "  ${RED}✗${NC} OpenClaw 未安装"
     fi
     
     echo ""
     
     # 当前配置
-    if [ -f "$CLAWDBOT_ENV" ]; then
+    if [ -f "$OPENCLAW_ENV" ]; then
         echo ""
         echo -e "  ${CYAN}当前配置:${NC}"
         
-        # 显示 ClawdBot 模型配置
-        if check_clawdbot_installed; then
-            local default_model=$(clawdbot config get models.default 2>/dev/null || echo "未配置")
+        # 显示 OpenClaw 模型配置
+        if check_openclaw_installed; then
+            local default_model=$(openclaw config get models.default 2>/dev/null || echo "未配置")
             echo -e "    • 默认模型: ${WHITE}$default_model${NC}"
         fi
         
         # 检查 API Key 配置
-        if grep -q "ANTHROPIC_API_KEY" "$CLAWDBOT_ENV" 2>/dev/null; then
+        if grep -q "ANTHROPIC_API_KEY" "$OPENCLAW_ENV" 2>/dev/null; then
             echo -e "    • AI 提供商: ${WHITE}Anthropic${NC}"
-        elif grep -q "OPENAI_API_KEY" "$CLAWDBOT_ENV" 2>/dev/null; then
+        elif grep -q "OPENAI_API_KEY" "$OPENCLAW_ENV" 2>/dev/null; then
             echo -e "    • AI 提供商: ${WHITE}OpenAI${NC}"
-        elif grep -q "GOOGLE_API_KEY" "$CLAWDBOT_ENV" 2>/dev/null; then
+        elif grep -q "GOOGLE_API_KEY" "$OPENCLAW_ENV" 2>/dev/null; then
             echo -e "    • AI 提供商: ${WHITE}Google${NC}"
         fi
     else
@@ -806,8 +806,8 @@ show_status() {
     # 目录状态
     echo -e "  ${CYAN}目录结构:${NC}"
     [ -d "$CONFIG_DIR" ] && echo -e "    ${GREEN}✓${NC} 配置目录: $CONFIG_DIR" || echo -e "    ${RED}✗${NC} 配置目录"
-    [ -f "$CLAWDBOT_ENV" ] && echo -e "    ${GREEN}✓${NC} 环境变量: $CLAWDBOT_ENV" || echo -e "    ${RED}✗${NC} 环境变量"
-    [ -f "$CLAWDBOT_JSON" ] && echo -e "    ${GREEN}✓${NC} ClawdBot 配置: $CLAWDBOT_JSON" || echo -e "    ${YELLOW}⚠${NC} ClawdBot 配置"
+    [ -f "$OPENCLAW_ENV" ] && echo -e "    ${GREEN}✓${NC} 环境变量: $OPENCLAW_ENV" || echo -e "    ${RED}✗${NC} 环境变量"
+    [ -f "$OPENCLAW_JSON" ] && echo -e "    ${GREEN}✓${NC} OpenClaw 配置: $OPENCLAW_JSON" || echo -e "    ${YELLOW}⚠${NC} OpenClaw 配置"
     
     echo ""
     print_divider
@@ -935,8 +935,8 @@ config_anthropic() {
         *) model="claude-sonnet-4-5-20250929" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "anthropic" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "anthropic" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Anthropic Claude 配置完成！"
@@ -996,8 +996,8 @@ config_openai() {
         *) model="gpt-4o" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "openai" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "openai" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "OpenAI GPT 配置完成！"
@@ -1052,8 +1052,8 @@ config_ollama() {
     esac
     
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "ollama" "" "$model" "$ollama_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "ollama" "" "$model" "$ollama_url"
     
     echo ""
     log_info "Ollama 配置完成！"
@@ -1090,7 +1090,7 @@ config_openrouter() {
     fi
     
     echo ""
-    local base_url=""  # ClawdBot 不支持自定义 API 地址
+    local base_url=""  # OpenClaw 不支持自定义 API 地址
     base_url=${base_url:-"https://openrouter.ai/api/v1"}
     
     echo ""
@@ -1116,8 +1116,8 @@ config_openrouter() {
     esac
     
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "openrouter" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "openrouter" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "OpenRouter 配置完成！"
@@ -1152,7 +1152,7 @@ config_google_gemini() {
         return
     fi    
     echo ""
-    local base_url=""  # ClawdBot 不支持自定义 API 地址
+    local base_url=""  # OpenClaw 不支持自定义 API 地址
     
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
@@ -1175,8 +1175,8 @@ config_google_gemini() {
     esac
     
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "google" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "google" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Google Gemini 配置完成！"
@@ -1245,7 +1245,7 @@ config_groq() {
         return
     fi    
     echo ""
-    local base_url=""  # ClawdBot 不支持自定义 API 地址
+    local base_url=""  # OpenClaw 不支持自定义 API 地址
     base_url=${base_url:-"https://api.groq.com/openai/v1"}
     
     echo ""
@@ -1271,8 +1271,8 @@ config_groq() {
     esac
     
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "groq" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "groq" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Groq 配置完成！"
@@ -1307,7 +1307,7 @@ config_mistral() {
         return
     fi    
     echo ""
-    local base_url=""  # ClawdBot 不支持自定义 API 地址
+    local base_url=""  # OpenClaw 不支持自定义 API 地址
     base_url=${base_url:-"https://api.mistral.ai/v1"}
     
     echo ""
@@ -1331,8 +1331,8 @@ config_mistral() {
     esac
     
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "mistral" "$api_key" "$model" "$base_url"
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "mistral" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Mistral AI 配置完成！"
@@ -1392,8 +1392,8 @@ config_xai() {
         *) model="grok-4-fast" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "xai" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "xai" "$api_key" "$model" ""
     
     echo ""
     log_info "xAI Grok 配置完成！"
@@ -1452,8 +1452,8 @@ config_zai() {
         *) model="glm-4.7" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "zai" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "zai" "$api_key" "$model" ""
     
     echo ""
     log_info "智谱 GLM 配置完成！"
@@ -1520,8 +1520,8 @@ config_minimax() {
         *) model="MiniMax-M2.1" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "$provider" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "$provider" "$api_key" "$model" ""
     
     echo ""
     log_info "MiniMax 配置完成！"
@@ -1586,8 +1586,8 @@ config_opencode() {
         *) model="claude-sonnet-4-5" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "opencode" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "opencode" "$api_key" "$model" ""
     
     echo ""
     log_info "OpenCode 配置完成！"
@@ -1648,8 +1648,8 @@ config_google_gemini_cli() {
         *) model="gemini-3-pro-preview" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "google-gemini-cli" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "google-gemini-cli" "$api_key" "$model" ""
     
     echo ""
     log_info "Google Gemini CLI 配置完成！"
@@ -1713,8 +1713,8 @@ config_google_antigravity() {
         *) model="gemini-3-pro-high" ;;
     esac
     
-    # 保存到 ClawdBot 环境变量配置
-    save_clawdbot_ai_config "google-antigravity" "$api_key" "$model" ""
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "google-antigravity" "$api_key" "$model" ""
     
     echo ""
     log_info "Google Antigravity 配置完成！"
@@ -1787,18 +1787,18 @@ config_telegram() {
     
     if [ -n "$bot_token" ] && [ -n "$user_id" ]; then
         
-        # 使用 clawdbot 命令配置
-        if check_clawdbot_installed; then
+        # 使用 openclaw 命令配置
+        if check_openclaw_installed; then
             echo ""
-            log_info "正在配置 ClawdBot Telegram 渠道..."
+            log_info "正在配置 OpenClaw Telegram 渠道..."
             
             # 启用 Telegram 插件
             echo -e "${YELLOW}启用 Telegram 插件...${NC}"
-            clawdbot plugins enable telegram 2>/dev/null || true
+            openclaw plugins enable telegram 2>/dev/null || true
             
             # 添加 Telegram channel
             echo -e "${YELLOW}添加 Telegram 账号...${NC}"
-            if clawdbot channels add --channel telegram --token "$bot_token" 2>/dev/null; then
+            if openclaw channels add --channel telegram --token "$bot_token" 2>/dev/null; then
                 log_info "Telegram 渠道配置成功！"
             else
                 log_warn "Telegram 渠道可能已存在或配置失败"
@@ -1819,7 +1819,7 @@ config_telegram() {
                 restart_gateway_for_channel
             fi
         else
-            log_error "ClawdBot 未安装，请先安装 ClawdBot"
+            log_error "OpenClaw 未安装，请先安装 OpenClaw"
         fi
         
         # 询问是否测试
@@ -1878,18 +1878,18 @@ config_discord() {
     
     if [ -n "$bot_token" ] && [ -n "$channel_id" ]; then
         
-        # 使用 clawdbot 命令配置
-        if check_clawdbot_installed; then
+        # 使用 openclaw 命令配置
+        if check_openclaw_installed; then
             echo ""
-            log_info "正在配置 ClawdBot Discord 渠道..."
+            log_info "正在配置 OpenClaw Discord 渠道..."
             
             # 启用 Discord 插件
             echo -e "${YELLOW}启用 Discord 插件...${NC}"
-            clawdbot plugins enable discord 2>/dev/null || true
+            openclaw plugins enable discord 2>/dev/null || true
             
             # 添加 Discord channel
             echo -e "${YELLOW}添加 Discord 账号...${NC}"
-            if clawdbot channels add --channel discord --token "$bot_token" 2>/dev/null; then
+            if openclaw channels add --channel discord --token "$bot_token" 2>/dev/null; then
                 log_info "Discord 渠道配置成功！"
             else
                 log_warn "Discord 渠道可能已存在或配置失败"
@@ -1897,7 +1897,7 @@ config_discord() {
             
             # 设置 groupPolicy 为 open（只响应 @ 机器人的消息）
             echo -e "${YELLOW}设置消息响应策略...${NC}"
-            clawdbot config set channels.discord.groupPolicy open 2>/dev/null || true
+            openclaw config set channels.discord.groupPolicy open 2>/dev/null || true
             log_info "已设置为: 响应 @机器人 的消息"
             
             echo ""
@@ -1914,7 +1914,7 @@ config_discord() {
                 restart_gateway_for_channel
             fi
         else
-            log_error "ClawdBot 未安装，请先安装 ClawdBot"
+            log_error "OpenClaw 未安装，请先安装 OpenClaw"
         fi
         
         # 询问是否测试
@@ -1940,8 +1940,8 @@ config_whatsapp() {
     echo -e "${CYAN}WhatsApp 配置需要扫描二维码登录${NC}"
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装，请先运行安装脚本"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，请先运行安装脚本"
         press_enter
         return
     fi
@@ -1954,12 +1954,12 @@ config_whatsapp() {
     
     if confirm "是否继续？"; then
         # 确保初始化
-        ensure_clawdbot_init
+        ensure_openclaw_init
         
         # 启用 WhatsApp 插件
         echo ""
         log_info "启用 WhatsApp 插件..."
-        clawdbot plugins enable whatsapp 2>/dev/null || true
+        openclaw plugins enable whatsapp 2>/dev/null || true
         
         echo ""
         log_info "正在启动 WhatsApp 登录向导..."
@@ -1967,7 +1967,7 @@ config_whatsapp() {
         echo ""
         
         # 使用 channels login 命令
-        clawdbot channels login --channel whatsapp --verbose
+        openclaw channels login --channel whatsapp --verbose
         
         echo ""
         if confirm "是否重启 Gateway 使配置生效？" "y"; then
@@ -2000,18 +2000,18 @@ config_slack() {
     
     if [ -n "$bot_token" ] && [ -n "$app_token" ]; then
         
-        # 使用 clawdbot 命令配置
-        if check_clawdbot_installed; then
+        # 使用 openclaw 命令配置
+        if check_openclaw_installed; then
             echo ""
-            log_info "正在配置 ClawdBot Slack 渠道..."
+            log_info "正在配置 OpenClaw Slack 渠道..."
             
             # 启用 Slack 插件
             echo -e "${YELLOW}启用 Slack 插件...${NC}"
-            clawdbot plugins enable slack 2>/dev/null || true
+            openclaw plugins enable slack 2>/dev/null || true
             
             # 添加 Slack channel
             echo -e "${YELLOW}添加 Slack 账号...${NC}"
-            if clawdbot channels add --channel slack --bot-token "$bot_token" --app-token "$app_token" 2>/dev/null; then
+            if openclaw channels add --channel slack --bot-token "$bot_token" --app-token "$app_token" 2>/dev/null; then
                 log_info "Slack 渠道配置成功！"
             else
                 log_warn "Slack 渠道可能已存在或配置失败"
@@ -2055,20 +2055,20 @@ config_wechat() {
     echo -e "${YELLOW}⚠️ 注意: 微信接入需要第三方工具支持${NC}"
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         return
     fi
     
     echo -e "${CYAN}微信接入方案:${NC}"
-    echo "  • ClawdBot 可能通过插件支持微信"
-    echo "  • 请查看 ClawdBot 文档了解详情"
+    echo "  • OpenClaw 可能通过插件支持微信"
+    echo "  • 请查看 OpenClaw 文档了解详情"
     echo ""
     
     # 检查是否有微信相关插件
     echo -e "${YELLOW}检查可用插件...${NC}"
-    local plugins=$(clawdbot plugins list 2>/dev/null | grep -i wechat || echo "")
+    local plugins=$(openclaw plugins list 2>/dev/null | grep -i wechat || echo "")
     
     if [ -n "$plugins" ]; then
         echo ""
@@ -2077,7 +2077,7 @@ config_wechat() {
         echo ""
         
         if confirm "是否启用微信插件？"; then
-            clawdbot plugins enable wechat 2>/dev/null || true
+            openclaw plugins enable wechat 2>/dev/null || true
             log_info "微信插件已启用"
             
             if confirm "是否重启 Gateway？" "y"; then
@@ -2112,8 +2112,8 @@ config_imessage() {
         return
     fi
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         return
     fi
@@ -2127,17 +2127,17 @@ config_imessage() {
     
     if confirm "是否继续配置？"; then
         # 确保初始化
-        ensure_clawdbot_init
+        ensure_openclaw_init
         
         # 启用 iMessage 插件
         echo ""
         log_info "启用 iMessage 插件..."
-        clawdbot plugins enable imessage 2>/dev/null || true
+        openclaw plugins enable imessage 2>/dev/null || true
         
         # 添加 iMessage channel
         echo ""
         log_info "配置 iMessage 渠道..."
-        clawdbot channels add --channel imessage 2>/dev/null || true
+        openclaw channels add --channel imessage 2>/dev/null || true
         
         echo ""
         log_info "iMessage 配置完成！"
@@ -2159,7 +2159,7 @@ install_feishu_plugin() {
     echo ""
     
     # 检查是否已安装飞书插件
-    local installed=$(clawdbot plugins list 2>/dev/null | grep -i feishu || echo "")
+    local installed=$(openclaw plugins list 2>/dev/null | grep -i feishu || echo "")
     
     if [ -n "$installed" ]; then
         log_info "飞书插件已安装: $installed"
@@ -2169,8 +2169,8 @@ install_feishu_plugin() {
     echo -e "${CYAN}正在安装社区飞书插件 @m1heng-clawd/feishu ...${NC}"
     echo ""
     
-    # 使用 clawdbot plugins install 安装
-    if clawdbot plugins install @m1heng-clawd/feishu 2>&1; then
+    # 使用 openclaw plugins install 安装
+    if openclaw plugins install @m1heng-clawd/feishu 2>&1; then
         echo ""
         log_info "✅ 飞书插件安装成功！"
         return 0
@@ -2187,7 +2187,7 @@ install_feishu_plugin() {
             log_error "插件安装失败"
             echo ""
             echo -e "${CYAN}请手动安装:${NC}"
-            echo "  clawdbot plugins install @m1heng-clawd/feishu"
+            echo "  openclaw plugins install @m1heng-clawd/feishu"
             echo "  # 或"
             echo "  npm install -g @m1heng-clawd/feishu"
             echo ""
@@ -2207,8 +2207,8 @@ config_feishu() {
     echo -e "${YELLOW}⚠️ 注意: 飞书接入通过社区插件支持${NC}"
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         return
     fi
@@ -2325,22 +2325,22 @@ config_feishu_app() {
     echo ""
     log_info "正在保存配置..."
     
-    # 使用 clawdbot config set 命令配置飞书渠道
+    # 使用 openclaw config set 命令配置飞书渠道
     echo -e "${YELLOW}配置飞书渠道...${NC}"
     
     # 设置飞书配置
-    clawdbot config set channels.feishu.appId "$feishu_app_id" 2>/dev/null
-    clawdbot config set channels.feishu.appSecret "$feishu_app_secret" 2>/dev/null
-    clawdbot config set channels.feishu.enabled true 2>/dev/null
+    openclaw config set channels.feishu.appId "$feishu_app_id" 2>/dev/null
+    openclaw config set channels.feishu.appSecret "$feishu_app_secret" 2>/dev/null
+    openclaw config set channels.feishu.enabled true 2>/dev/null
     
     # 设置连接模式为 WebSocket（推荐，无需公网服务器）
-    clawdbot config set channels.feishu.connectionMode "websocket" 2>/dev/null
+    openclaw config set channels.feishu.connectionMode "websocket" 2>/dev/null
     
     # 设置域名（国内用 feishu，国际用 lark）
-    clawdbot config set channels.feishu.domain "feishu" 2>/dev/null
+    openclaw config set channels.feishu.domain "feishu" 2>/dev/null
     
     # 设置群组策略
-    clawdbot config set channels.feishu.requireMention true 2>/dev/null
+    openclaw config set channels.feishu.requireMention true 2>/dev/null
     
     if [ $? -eq 0 ]; then
         log_info "飞书渠道配置成功！"
@@ -2394,15 +2394,15 @@ config_identity() {
     print_divider
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         return
     fi
     
     # 显示当前配置
     echo -e "${CYAN}当前配置:${NC}"
-    clawdbot config get identity 2>/dev/null || echo "  (未配置)"
+    openclaw config get identity 2>/dev/null || echo "  (未配置)"
     echo ""
     print_divider
     echo ""
@@ -2411,10 +2411,10 @@ config_identity() {
     read -p "$(echo -e "${YELLOW}如何称呼你: ${NC}")" user_name
     read -p "$(echo -e "${YELLOW}时区 (如 Asia/Shanghai): ${NC}")" timezone
     
-    # 使用 clawdbot 命令设置
-    [ -n "$bot_name" ] && clawdbot config set identity.name "$bot_name" 2>/dev/null
-    [ -n "$user_name" ] && clawdbot config set identity.user_name "$user_name" 2>/dev/null
-    [ -n "$timezone" ] && clawdbot config set identity.timezone "$timezone" 2>/dev/null
+    # 使用 openclaw 命令设置
+    [ -n "$bot_name" ] && openclaw config set identity.name "$bot_name" 2>/dev/null
+    [ -n "$user_name" ] && openclaw config set identity.user_name "$user_name" 2>/dev/null
+    [ -n "$timezone" ] && openclaw config set identity.timezone "$timezone" 2>/dev/null
     
     echo ""
     log_info "身份配置已更新！"
@@ -2448,21 +2448,21 @@ config_security() {
     
     case $choice in
         1)
-            if confirm "允许 ClawdBot 执行系统命令？这可能带来安全风险" "n"; then
+            if confirm "允许 OpenClaw 执行系统命令？这可能带来安全风险" "n"; then
                 log_info "已启用系统命令执行"
             else
                 log_info "已禁用系统命令执行"
             fi
             ;;
         2)
-            if confirm "允许 ClawdBot 读写文件？" "n"; then
+            if confirm "允许 OpenClaw 读写文件？" "n"; then
                 log_info "已启用文件访问"
             else
                 log_info "已禁用文件访问"
             fi
             ;;
         3)
-            if confirm "允许 ClawdBot 浏览网络？" "y"; then
+            if confirm "允许 OpenClaw 浏览网络？" "y"; then
                 log_info "已启用网络浏览"
             else
                 log_info "已禁用网络浏览"
@@ -2495,21 +2495,21 @@ config_whitelist() {
     print_divider
     echo ""
     
-    if ! check_clawdbot_installed; then
-        log_error "ClawdBot 未安装"
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         return
     fi
     
-    echo -e "${CYAN}使用 clawdbot 命令配置白名单:${NC}"
+    echo -e "${CYAN}使用 openclaw 命令配置白名单:${NC}"
     echo ""
-    echo "  clawdbot config set security.allowed_paths '/path/to/dir1,/path/to/dir2'"
+    echo "  openclaw config set security.allowed_paths '/path/to/dir1,/path/to/dir2'"
     echo ""
     
     read -p "$(echo -e "${YELLOW}输入允许访问的目录 (逗号分隔): ${NC}")" paths
     
     if [ -n "$paths" ]; then
-        clawdbot config set security.allowed_paths "$paths" 2>/dev/null
+        openclaw config set security.allowed_paths "$paths" 2>/dev/null
         log_info "白名单配置已保存"
     fi
 }
@@ -2525,7 +2525,7 @@ manage_service() {
     echo ""
     
     # 检查服务状态
-    if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+    if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
         echo -e "  当前状态: ${GREEN}● 运行中${NC}"
     else
         echo -e "  当前状态: ${RED}● 已停止${NC}"
@@ -2548,26 +2548,26 @@ manage_service() {
     case $choice in
         1)
             echo ""
-            if command -v clawdbot &> /dev/null; then
+            if command -v openclaw &> /dev/null; then
                 # 确保基础配置正确
-                ensure_clawdbot_init
+                ensure_openclaw_init
                 
                 # 加载环境变量
-                if [ -f "$CLAWDBOT_ENV" ]; then
-                    source "$CLAWDBOT_ENV"
+                if [ -f "$OPENCLAW_ENV" ]; then
+                    source "$OPENCLAW_ENV"
                     log_info "已加载环境变量"
                 fi
                 
                 # 先验证配置是否有效
                 log_info "验证配置..."
-                local config_check=$(clawdbot doctor 2>&1 | head -5)
+                local config_check=$(openclaw doctor 2>&1 | head -5)
                 if echo "$config_check" | grep -qi "Config invalid"; then
                     log_error "配置无效，请先修复配置"
                     echo ""
                     echo -e "${YELLOW}错误详情:${NC}"
                     echo "$config_check" | head -10
                     echo ""
-                    echo -e "${CYAN}建议运行: clawdbot doctor --fix${NC}"
+                    echo -e "${CYAN}建议运行: openclaw doctor --fix${NC}"
                     press_enter
                     manage_service
                     return
@@ -2577,137 +2577,137 @@ manage_service() {
                 
                 # 后台启动 Gateway（使用 setsid 完全脱离终端）
                 if command -v setsid &> /dev/null; then
-                    if [ -f "$CLAWDBOT_ENV" ]; then
-                        setsid bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+                    if [ -f "$OPENCLAW_ENV" ]; then
+                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        setsid clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+                        setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                 else
                     # 备用方案：nohup + disown
-                    if [ -f "$CLAWDBOT_ENV" ]; then
-                        nohup bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+                    if [ -f "$OPENCLAW_ENV" ]; then
+                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        nohup clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+                        nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                     disown 2>/dev/null || true
                 fi
                 
                 sleep 3
-                if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+                if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
                     log_info "服务已在后台启动"
-                    echo -e "${CYAN}日志文件: /tmp/clawdbot-gateway.log${NC}"
+                    echo -e "${CYAN}日志文件: /tmp/openclaw-gateway.log${NC}"
                     # 显示最近的日志
                     echo ""
                     echo -e "${GRAY}最近日志:${NC}"
-                    tail -5 /tmp/clawdbot-gateway.log 2>/dev/null | sed 's/^/  /'
+                    tail -5 /tmp/openclaw-gateway.log 2>/dev/null | sed 's/^/  /'
                 else
                     log_error "启动失败"
                     echo ""
                     echo -e "${YELLOW}错误日志:${NC}"
-                    tail -10 /tmp/clawdbot-gateway.log 2>/dev/null | sed 's/^/  /'
+                    tail -10 /tmp/openclaw-gateway.log 2>/dev/null | sed 's/^/  /'
                     echo ""
-                    echo -e "${CYAN}建议运行: clawdbot doctor --fix${NC}"
+                    echo -e "${CYAN}建议运行: openclaw doctor --fix${NC}"
                 fi
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         2)
             echo ""
             log_info "正在停止服务..."
-            if command -v clawdbot &> /dev/null; then
-                clawdbot gateway stop 2>/dev/null || true
+            if command -v openclaw &> /dev/null; then
+                openclaw gateway stop 2>/dev/null || true
                 # 确保进程被杀死
-                pkill -f "clawdbot.*gateway" 2>/dev/null || true
+                pkill -f "openclaw.*gateway" 2>/dev/null || true
                 sleep 1
-                if ! pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+                if ! pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
                     log_info "服务已停止"
                 else
                     log_warn "进程可能仍在运行"
                 fi
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         3)
             echo ""
             log_info "正在重启服务..."
-            if command -v clawdbot &> /dev/null; then
-                clawdbot gateway stop 2>/dev/null || true
-                pkill -f "clawdbot.*gateway" 2>/dev/null || true
+            if command -v openclaw &> /dev/null; then
+                openclaw gateway stop 2>/dev/null || true
+                pkill -f "openclaw.*gateway" 2>/dev/null || true
                 sleep 2
-                ensure_clawdbot_init
+                ensure_openclaw_init
                 
                 # 加载环境变量
-                if [ -f "$CLAWDBOT_ENV" ]; then
-                    source "$CLAWDBOT_ENV"
+                if [ -f "$OPENCLAW_ENV" ]; then
+                    source "$OPENCLAW_ENV"
                 fi
                 
                 # 后台启动 Gateway（使用 setsid 完全脱离终端）
                 if command -v setsid &> /dev/null; then
-                    if [ -f "$CLAWDBOT_ENV" ]; then
-                        setsid bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+                    if [ -f "$OPENCLAW_ENV" ]; then
+                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        setsid clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+                        setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                 else
-                    if [ -f "$CLAWDBOT_ENV" ]; then
-                        nohup bash -c "source $CLAWDBOT_ENV && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+                    if [ -f "$OPENCLAW_ENV" ]; then
+                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        nohup clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+                        nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                     disown 2>/dev/null || true
                 fi
                 
                 sleep 3
-                if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+                if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
                     log_info "服务已重启"
                 else
                     log_error "重启失败"
                 fi
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         4)
             echo ""
-            if command -v clawdbot &> /dev/null; then
-                clawdbot status
+            if command -v openclaw &> /dev/null; then
+                openclaw status
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         5)
             echo ""
-            if command -v clawdbot &> /dev/null; then
+            if command -v openclaw &> /dev/null; then
                 echo -e "${CYAN}按 Ctrl+C 退出日志查看${NC}"
                 sleep 1
-                clawdbot logs --follow
+                openclaw logs --follow
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         6)
             echo ""
-            if command -v clawdbot &> /dev/null; then
-                clawdbot doctor --fix
+            if command -v openclaw &> /dev/null; then
+                openclaw doctor --fix
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         7)
             echo ""
-            if command -v clawdbot &> /dev/null; then
+            if command -v openclaw &> /dev/null; then
                 log_info "正在安装系统服务..."
-                clawdbot gateway install
+                openclaw gateway install
                 log_info "系统服务已安装"
                 echo ""
                 echo -e "${CYAN}现在可以使用以下命令管理服务:${NC}"
-                echo "  clawdbot gateway start"
-                echo "  clawdbot gateway stop"
-                echo "  clawdbot gateway restart"
+                echo "  openclaw gateway start"
+                echo "  openclaw gateway stop"
+                echo "  openclaw gateway restart"
             else
-                log_error "ClawdBot 未安装"
+                log_error "OpenClaw 未安装"
             fi
             ;;
         0)
@@ -2719,40 +2719,40 @@ manage_service() {
     manage_service
 }
 
-# 确保 ClawdBot 基础配置正确
-ensure_clawdbot_init() {
-    local CLAWDBOT_DIR="$HOME/.clawdbot"
+# 确保 OpenClaw 基础配置正确
+ensure_openclaw_init() {
+    local OPENCLAW_DIR="$HOME/.openclaw"
     
     # 创建必要的目录
-    mkdir -p "$CLAWDBOT_DIR/agents/main/sessions" 2>/dev/null || true
-    mkdir -p "$CLAWDBOT_DIR/agents/main/agent" 2>/dev/null || true
-    mkdir -p "$CLAWDBOT_DIR/credentials" 2>/dev/null || true
+    mkdir -p "$OPENCLAW_DIR/agents/main/sessions" 2>/dev/null || true
+    mkdir -p "$OPENCLAW_DIR/agents/main/agent" 2>/dev/null || true
+    mkdir -p "$OPENCLAW_DIR/credentials" 2>/dev/null || true
     
     # 修复权限
-    chmod 700 "$CLAWDBOT_DIR" 2>/dev/null || true
+    chmod 700 "$OPENCLAW_DIR" 2>/dev/null || true
     
     # 确保 gateway.mode 已设置
-    local current_mode=$(clawdbot config get gateway.mode 2>/dev/null)
+    local current_mode=$(openclaw config get gateway.mode 2>/dev/null)
     if [ -z "$current_mode" ] || [ "$current_mode" = "undefined" ]; then
-        clawdbot config set gateway.mode local 2>/dev/null || true
+        openclaw config set gateway.mode local 2>/dev/null || true
     fi
 }
 
-# 保存 AI 配置到 ClawdBot 环境变量
-save_clawdbot_ai_config() {
+# 保存 AI 配置到 OpenClaw 环境变量
+save_openclaw_ai_config() {
     local provider="$1"
     local api_key="$2"
     local model="$3"
     local base_url="$4"
     
-    ensure_clawdbot_init
+    ensure_openclaw_init
     
-    local env_file="$CLAWDBOT_ENV"
-    local config_file="$CLAWDBOT_JSON"
+    local env_file="$OPENCLAW_ENV"
+    local config_file="$OPENCLAW_JSON"
     
     # 创建或更新环境变量文件
     cat > "$env_file" << EOF
-# ClawdBot 环境变量配置
+# OpenClaw 环境变量配置
 # 由配置菜单自动生成: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
 
@@ -2802,65 +2802,65 @@ EOF
     chmod 600 "$env_file"
     
     # 设置默认模型
-    if check_clawdbot_installed; then
-        local clawdbot_model=""
+    if check_openclaw_installed; then
+        local openclaw_model=""
         local use_custom_provider=false
         
         # 如果使用自定义 BASE_URL，需要配置自定义 provider
         if [ -n "$base_url" ] && [ "$provider" = "anthropic" ]; then
             use_custom_provider=true
             configure_custom_provider "$provider" "$api_key" "$model" "$base_url" "$config_file"
-            clawdbot_model="anthropic-custom/$model"
+            openclaw_model="anthropic-custom/$model"
         elif [ -n "$base_url" ] && [ "$provider" = "openai" ]; then
             use_custom_provider=true
             configure_custom_provider "$provider" "$api_key" "$model" "$base_url" "$config_file"
-            clawdbot_model="openai-custom/$model"
+            openclaw_model="openai-custom/$model"
         else
             case "$provider" in
                 anthropic)
-                    clawdbot_model="anthropic/$model"
+                    openclaw_model="anthropic/$model"
                     ;;
                 openai|groq|mistral)
-                    clawdbot_model="openai/$model"
+                    openclaw_model="openai/$model"
                     ;;
                 openrouter)
-                    clawdbot_model="openrouter/$model"
+                    openclaw_model="openrouter/$model"
                     ;;
                 google)
-                    clawdbot_model="google/$model"
+                    openclaw_model="google/$model"
                     ;;
                 ollama)
-                    clawdbot_model="ollama/$model"
+                    openclaw_model="ollama/$model"
                     ;;
                 xai)
-                    clawdbot_model="xai/$model"
+                    openclaw_model="xai/$model"
                     ;;
                 zai)
-                    clawdbot_model="zai/$model"
+                    openclaw_model="zai/$model"
                     ;;
                 minimax)
-                    clawdbot_model="minimax/$model"
+                    openclaw_model="minimax/$model"
                     ;;
                 minimax-cn)
-                    clawdbot_model="minimax-cn/$model"
+                    openclaw_model="minimax-cn/$model"
                     ;;
                 opencode)
-                    clawdbot_model="opencode/$model"
+                    openclaw_model="opencode/$model"
                     ;;
                 google-gemini-cli)
-                    clawdbot_model="google-gemini-cli/$model"
+                    openclaw_model="google-gemini-cli/$model"
                     ;;
                 google-antigravity)
-                    clawdbot_model="google-antigravity/$model"
+                    openclaw_model="google-antigravity/$model"
                     ;;
             esac
         fi
         
-        if [ -n "$clawdbot_model" ]; then
+        if [ -n "$openclaw_model" ]; then
             # 加载环境变量并设置模型
             source "$env_file"
-            clawdbot models set "$clawdbot_model" 2>/dev/null || true
-            log_info "ClawdBot 默认模型已设置为: $clawdbot_model"
+            openclaw models set "$openclaw_model" 2>/dev/null || true
+            log_info "OpenClaw 默认模型已设置为: $openclaw_model"
         fi
     fi
     
@@ -2873,9 +2873,9 @@ EOF
     fi
     
     if [ -n "$shell_rc" ]; then
-        if ! grep -q "source.*clawdbot/env" "$shell_rc" 2>/dev/null; then
+        if ! grep -q "source.*openclaw/env" "$shell_rc" 2>/dev/null; then
             echo "" >> "$shell_rc"
-            echo "# ClawdBot 环境变量" >> "$shell_rc"
+            echo "# OpenClaw 环境变量" >> "$shell_rc"
             echo "[ -f \"$env_file\" ] && source \"$env_file\"" >> "$shell_rc"
         fi
     fi
@@ -2968,7 +2968,7 @@ try {
         log_info "使用 node 配置自定义 Provider..."
         
         # 将变量写入临时文件，避免 shell 转义问题
-        local tmp_vars="/tmp/clawdbot_provider_vars_$$.json"
+        local tmp_vars="/tmp/openclaw_provider_vars_$$.json"
         cat > "$tmp_vars" << EOFVARS
 {
     "config_file": "$config_file",
@@ -3048,7 +3048,7 @@ console.log('Custom provider configured: ' + vars.provider_id);
         log_info "使用 python3 配置自定义 Provider..."
         
         # 将变量写入临时文件，避免 shell 转义问题
-        local tmp_vars="/tmp/clawdbot_provider_vars_$$.json"
+        local tmp_vars="/tmp/openclaw_provider_vars_$$.json"
         cat > "$tmp_vars" << EOFVARS
 {
     "config_file": "$config_file",
@@ -3156,8 +3156,8 @@ advanced_settings() {
     print_menu_item "3" "恢复配置" "📥"
     print_menu_item "4" "重置配置" "🔄"
     print_menu_item "5" "清理日志" "🧹"
-    print_menu_item "6" "更新 ClawdBot" "⬆️"
-    print_menu_item "7" "卸载 ClawdBot" "🗑️"
+    print_menu_item "6" "更新 OpenClaw" "⬆️"
+    print_menu_item "7" "卸载 OpenClaw" "🗑️"
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
@@ -3168,18 +3168,18 @@ advanced_settings() {
         1)
             echo ""
             log_info "正在打开环境变量配置..."
-            if [ -f "$CLAWDBOT_ENV" ]; then
+            if [ -f "$OPENCLAW_ENV" ]; then
                 if [ -n "$EDITOR" ]; then
-                    $EDITOR "$CLAWDBOT_ENV"
+                    $EDITOR "$OPENCLAW_ENV"
                 elif command -v nano &> /dev/null; then
-                    nano "$CLAWDBOT_ENV"
+                    nano "$OPENCLAW_ENV"
                 elif command -v vim &> /dev/null; then
-                    vim "$CLAWDBOT_ENV"
+                    vim "$OPENCLAW_ENV"
                 else
-                    cat "$CLAWDBOT_ENV"
+                    cat "$OPENCLAW_ENV"
                 fi
             else
-                log_error "环境变量文件不存在: $CLAWDBOT_ENV"
+                log_error "环境变量文件不存在: $OPENCLAW_ENV"
             fi
             ;;
         2)
@@ -3196,33 +3196,33 @@ advanced_settings() {
             ;;
         4)
             if confirm "确定要重置所有配置吗？这将删除当前配置" "n"; then
-                rm -f "$CLAWDBOT_ENV"
-                rm -rf "$CONFIG_DIR/clawdbot.json" 2>/dev/null
+                rm -f "$OPENCLAW_ENV"
+                rm -rf "$CONFIG_DIR/openclaw.json" 2>/dev/null
                 log_info "配置已重置，请重新运行安装脚本"
             fi
             ;;
         5)
             if confirm "确定要清理日志吗？" "n"; then
-                if command -v clawdbot &> /dev/null; then
-                    clawdbot logs clear 2>/dev/null || log_warn "ClawdBot 日志清理命令不可用"
+                if command -v openclaw &> /dev/null; then
+                    openclaw logs clear 2>/dev/null || log_warn "OpenClaw 日志清理命令不可用"
                 fi
-                rm -f /tmp/clawdbot-gateway.log 2>/dev/null
+                rm -f /tmp/openclaw-gateway.log 2>/dev/null
                 log_info "日志已清理"
             fi
             ;;
         6)
             echo ""
-            log_info "正在更新 ClawdBot..."
-            npm update -g clawdbot
+            log_info "正在更新 OpenClaw..."
+            npm update -g openclaw
             log_info "更新完成"
             ;;
         7)
-            if confirm "确定要卸载 ClawdBot 吗？" "n"; then
-                npm uninstall -g clawdbot
+            if confirm "确定要卸载 OpenClaw 吗？" "n"; then
+                npm uninstall -g openclaw
                 if confirm "是否同时删除配置文件？" "n"; then
                     rm -rf "$CONFIG_DIR"
                 fi
-                log_info "ClawdBot 已卸载"
+                log_info "OpenClaw 已卸载"
                 exit 0
             fi
             ;;
@@ -3268,8 +3268,8 @@ restore_config() {
     
     if [ -n "$choice" ] && [ "$choice" -ge 1 ] && [ "$choice" -lt "$i" ]; then
         local selected_backup="${backups[$((choice-1))]}"
-        cp "$selected_backup" "$CLAWDBOT_ENV"
-        source "$CLAWDBOT_ENV"
+        cp "$selected_backup" "$OPENCLAW_ENV"
+        source "$OPENCLAW_ENV"
         log_info "环境配置已从备份恢复"
     else
         log_error "无效选择"
@@ -3287,13 +3287,13 @@ view_config() {
     echo ""
     
     # 显示环境变量配置
-    echo -e "${CYAN}环境变量配置 ($CLAWDBOT_ENV):${NC}"
+    echo -e "${CYAN}环境变量配置 ($OPENCLAW_ENV):${NC}"
     echo ""
-    if [ -f "$CLAWDBOT_ENV" ]; then
+    if [ -f "$OPENCLAW_ENV" ]; then
         if command -v bat &> /dev/null; then
-            bat --style=numbers --language=bash "$CLAWDBOT_ENV"
+            bat --style=numbers --language=bash "$OPENCLAW_ENV"
         else
-            cat -n "$CLAWDBOT_ENV"
+            cat -n "$OPENCLAW_ENV"
         fi
     else
         echo -e "  ${GRAY}(未配置)${NC}"
@@ -3303,21 +3303,21 @@ view_config() {
     print_divider
     echo ""
     
-    # 显示 ClawdBot 配置
-    if check_clawdbot_installed; then
-        echo -e "${CYAN}ClawdBot 配置:${NC}"
+    # 显示 OpenClaw 配置
+    if check_openclaw_installed; then
+        echo -e "${CYAN}OpenClaw 配置:${NC}"
         echo ""
-        clawdbot config list 2>/dev/null || echo -e "  ${GRAY}(无法获取)${NC}"
+        openclaw config list 2>/dev/null || echo -e "  ${GRAY}(无法获取)${NC}"
         echo ""
         
         echo -e "${CYAN}已配置渠道:${NC}"
         echo ""
-        clawdbot channels list 2>/dev/null || echo -e "  ${GRAY}(无渠道)${NC}"
+        openclaw channels list 2>/dev/null || echo -e "  ${GRAY}(无渠道)${NC}"
         echo ""
         
         echo -e "${CYAN}当前模型:${NC}"
         echo ""
-        clawdbot models status 2>/dev/null || echo -e "  ${GRAY}(未配置)${NC}"
+        openclaw models status 2>/dev/null || echo -e "  ${GRAY}(未配置)${NC}"
     fi
     
     echo ""
@@ -3335,12 +3335,12 @@ quick_test_menu() {
     print_divider
     echo ""
     
-    # 显示 ClawdBot 状态
-    if check_clawdbot_installed; then
-        local version=$(clawdbot --version 2>/dev/null || echo "unknown")
-        echo -e "  ${GREEN}✓${NC} ClawdBot 已安装: $version"
+    # 显示 OpenClaw 状态
+    if check_openclaw_installed; then
+        local version=$(openclaw --version 2>/dev/null || echo "unknown")
+        echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $version"
     else
-        echo -e "  ${YELLOW}⚠${NC} ClawdBot 未安装"
+        echo -e "  ${YELLOW}⚠${NC} OpenClaw 未安装"
     fi
     echo ""
     print_divider
@@ -3353,10 +3353,10 @@ quick_test_menu() {
     print_menu_item "4" "测试 Slack 机器人" "💼"
     print_menu_item "5" "测试 Ollama 本地模型" "🟠"
     echo ""
-    echo -e "${CYAN}ClawdBot 诊断 (需要已安装):${NC}"
-    print_menu_item "6" "clawdbot doctor (诊断)" "🔍"
-    print_menu_item "7" "clawdbot status (渠道状态)" "📊"
-    print_menu_item "8" "clawdbot health (Gateway 健康)" "💚"
+    echo -e "${CYAN}OpenClaw 诊断 (需要已安装):${NC}"
+    print_menu_item "6" "openclaw doctor (诊断)" "🔍"
+    print_menu_item "7" "openclaw status (渠道状态)" "📊"
+    print_menu_item "8" "openclaw health (Gateway 健康)" "💚"
     echo ""
     print_menu_item "9" "运行全部 API 测试" "🔄"
     print_menu_item "0" "返回主菜单" "↩️"
@@ -3389,14 +3389,14 @@ quick_test_ai() {
     echo ""
     
     # 从环境变量文件读取配置
-    if [ ! -f "$CLAWDBOT_ENV" ]; then
+    if [ ! -f "$OPENCLAW_ENV" ]; then
         log_error "AI 模型尚未配置，请先完成配置"
         press_enter
         quick_test_menu
         return
     fi
     
-    source "$CLAWDBOT_ENV"
+    source "$OPENCLAW_ENV"
     
     local provider=""
     local api_key=""
@@ -3438,8 +3438,8 @@ quick_test_ai() {
     fi
     
     # 获取当前模型
-    if check_clawdbot_installed; then
-        model=$(clawdbot config get models.default 2>/dev/null | sed 's|.*/||')
+    if check_openclaw_installed; then
+        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
     fi
     
     echo -e "当前配置:"
@@ -3561,10 +3561,10 @@ quick_test_doctor() {
     clear_screen
     print_header
     
-    echo -e "${WHITE}🔍 ClawdBot 诊断${NC}"
+    echo -e "${WHITE}🔍 OpenClaw 诊断${NC}"
     print_divider
     
-    run_clawdbot_doctor
+    run_openclaw_doctor
     
     press_enter
     quick_test_menu
@@ -3574,10 +3574,10 @@ quick_test_status() {
     clear_screen
     print_header
     
-    echo -e "${WHITE}📊 ClawdBot 渠道状态${NC}"
+    echo -e "${WHITE}📊 OpenClaw 渠道状态${NC}"
     print_divider
     
-    run_clawdbot_status
+    run_openclaw_status
     
     press_enter
     quick_test_menu
@@ -3590,7 +3590,7 @@ quick_test_health() {
     echo -e "${WHITE}💚 Gateway 健康检查${NC}"
     print_divider
     
-    run_clawdbot_health
+    run_openclaw_health
     
     press_enter
     quick_test_menu
@@ -3611,7 +3611,7 @@ run_all_tests() {
     local passed_tests=0
     
     # 从环境变量读取 AI 配置
-    [ -f "$CLAWDBOT_ENV" ] && source "$CLAWDBOT_ENV"
+    [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
     local provider=""
     local api_key=""
@@ -3632,8 +3632,8 @@ run_all_tests() {
     fi
     
     # 获取当前模型
-    if check_clawdbot_installed; then
-        model=$(clawdbot config get models.default 2>/dev/null | sed 's|.*/||')
+    if check_openclaw_installed; then
+        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
     fi
     
     if [ -n "$provider" ] && [ -n "$api_key" ] && [ "$api_key" != "your-api-key-here" ]; then
@@ -3675,7 +3675,7 @@ run_all_tests() {
     echo ""
     echo -e "${CYAN}渠道测试:${NC}"
     echo -e "  使用 ${WHITE}快速测试${NC} 菜单手动测试各个渠道"
-    echo -e "  或运行 ${WHITE}clawdbot channels list${NC} 查看已配置渠道"
+    echo -e "  或运行 ${WHITE}openclaw channels list${NC} 查看已配置渠道"
     echo ""
     
     # 汇总结果
@@ -3695,13 +3695,13 @@ run_all_tests() {
         echo -e "${YELLOW}⚠ 没有可测试的配置，请先完成相关配置${NC}"
     fi
     
-    # 如果 ClawdBot 已安装，提示可用的诊断命令
-    if check_clawdbot_installed; then
+    # 如果 OpenClaw 已安装，提示可用的诊断命令
+    if check_openclaw_installed; then
         echo ""
         echo -e "${CYAN}提示: 可使用以下命令进行更详细的诊断:${NC}"
-        echo "  • clawdbot doctor  - 健康检查 + 修复建议"
-        echo "  • clawdbot status  - 渠道状态"
-        echo "  • clawdbot health  - Gateway 健康状态"
+        echo "  • openclaw doctor  - 健康检查 + 修复建议"
+        echo "  • openclaw status  - 渠道状态"
+        echo "  • openclaw health  - Gateway 健康状态"
     fi
     
     press_enter

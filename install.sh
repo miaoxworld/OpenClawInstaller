@@ -2,16 +2,22 @@
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                                                                           ║
-# ║   🦞 ClawdBot 一键部署脚本 v1.0.0                                          ║
+# ║   🦞 OpenClaw 一键部署脚本 v1.1.0                                          ║
 # ║   智能 AI 助手部署工具 - 支持多平台多模型                                    ║
 # ║                                                                           ║
-# ║   GitHub: https://github.com/miaoxworld/ClawdBotInstaller                 ║
-# ║   官方文档: https://clawd.bot/docs                                         ║
-# ║                                                                           ║
+# ║   GitHub: https://github.com/miaoxworld/OpenClawInstaller                 ║
+# ║   官方文档: https://docs.openclaw.ai                                       ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # 使用方法:
-#   curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
+#   或本地执行: chmod +x install.sh && ./install.sh
+#
+# 版本更新:
+#   v1.1.0 - 同步 OpenClaw v2026.1.24 命令变更 (clawdbot -> openclaw)
+#
+# 使用方法:
+#   curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
 #   或本地执行: chmod +x install.sh && ./install.sh
 #
 
@@ -39,10 +45,10 @@ GRAY='\033[0;90m'
 NC='\033[0m' # 无颜色
 
 # ================================ 配置变量 ================================
-CLAWDBOT_VERSION="latest"
-CONFIG_DIR="$HOME/.clawdbot"
+OPENCLAW_VERSION="latest"
+CONFIG_DIR="$HOME/.openclaw"
 MIN_NODE_VERSION=22
-GITHUB_REPO="miaoxworld/ClawdBotInstaller"
+GITHUB_REPO="miaoxworld/OpenClawInstaller"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 
 # ================================ 工具函数 ================================
@@ -51,14 +57,14 @@ print_banner() {
     echo -e "${CYAN}"
     cat << 'EOF'
     
-     ██████╗██╗      █████╗ ██╗    ██╗██████╗ ██████╗  ██████╗ ████████╗
-    ██╔════╝██║     ██╔══██╗██║    ██║██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝
-    ██║     ██║     ███████║██║ █╗ ██║██║  ██║██████╔╝██║   ██║   ██║   
-    ██║     ██║     ██╔══██║██║███╗██║██║  ██║██╔══██╗██║   ██║   ██║   
-    ╚██████╗███████╗██║  ██║╚███╔███╔╝██████╔╝██████╔╝╚██████╔╝   ██║   
-     ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═════╝ ╚═════╝  ╚═════╝    ╚═╝   
-                                                                         
-              🦞 智能 AI 助手一键部署工具 v1.0.0 🦞
+     ██████╗ ██████╗ ███████╗███╗   ██╗ ██████╗██╗      █████╗ ██╗   ██╗
+    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔════╝██║     ██╔══██╗╚██╗ ██╔╝
+    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║██║     ██║     ███████║ ╚████╔╝ 
+    ██║   ██║██╔══██╗██╔══╝  ██║╚██╗██║██║     ██║     ██╔══██║  ╚██╔╝  
+    ╚██████╔╝██████╔╝███████╗██║ ╚████║╚██████╗███████╗██║  ██║   ██║   
+     ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝   ╚═╝   
+                                                                          
+              🦞 智能 AI 助手一键部署工具 v1.1.0 🦞
     
 EOF
     echo -e "${NC}"
@@ -272,7 +278,7 @@ install_dependencies() {
     install_nodejs
 }
 
-# ================================ ClawdBot 安装 ================================
+# ================================ OpenClaw 安装 ================================
 
 create_directories() {
     log_step "创建配置目录..."
@@ -282,64 +288,64 @@ create_directories() {
     log_info "配置目录: $CONFIG_DIR"
 }
 
-install_clawdbot() {
-    log_step "安装 ClawdBot..."
+install_openclaw() {
+    log_step "安装 OpenClaw..."
     
     # 检查是否已安装
-    if check_command clawdbot; then
-        local current_version=$(clawdbot --version 2>/dev/null || echo "unknown")
-        log_warn "ClawdBot 已安装 (版本: $current_version)"
+    if check_command openclaw; then
+        local current_version=$(openclaw --version 2>/dev/null || echo "unknown")
+        log_warn "OpenClaw 已安装 (版本: $current_version)"
         if ! confirm "是否重新安装/更新？"; then
-            init_clawdbot_config
+            init_openclaw_config
             return 0
         fi
     fi
     
     # 使用 npm 全局安装
-    log_info "正在从 npm 安装 ClawdBot..."
-    npm install -g clawdbot@$CLAWDBOT_VERSION
+    log_info "正在从 npm 安装 OpenClaw..."
+    npm install -g openclaw@$OPENCLAW_VERSION
     
     # 验证安装
-    if check_command clawdbot; then
-        log_info "ClawdBot 安装成功: $(clawdbot --version 2>/dev/null || echo 'installed')"
-        init_clawdbot_config
+    if check_command openclaw; then
+        log_info "OpenClaw 安装成功: $(openclaw --version 2>/dev/null || echo 'installed')"
+        init_openclaw_config
     else
-        log_error "ClawdBot 安装失败"
+        log_error "OpenClaw 安装失败"
         exit 1
     fi
 }
 
-# 初始化 ClawdBot 配置
-init_clawdbot_config() {
-    log_step "初始化 ClawdBot 配置..."
+# 初始化 OpenClaw 配置
+init_openclaw_config() {
+    log_step "初始化 OpenClaw 配置..."
     
-    local CLAWDBOT_DIR="$HOME/.clawdbot"
+    local OPENCLAW_DIR="$HOME/.openclaw"
     
     # 创建必要的目录
-    mkdir -p "$CLAWDBOT_DIR/agents/main/sessions"
-    mkdir -p "$CLAWDBOT_DIR/agents/main/agent"
-    mkdir -p "$CLAWDBOT_DIR/credentials"
+    mkdir -p "$OPENCLAW_DIR/agents/main/sessions"
+    mkdir -p "$OPENCLAW_DIR/agents/main/agent"
+    mkdir -p "$OPENCLAW_DIR/credentials"
     
     # 修复权限
-    chmod 700 "$CLAWDBOT_DIR" 2>/dev/null || true
+    chmod 700 "$OPENCLAW_DIR" 2>/dev/null || true
     
     # 设置 gateway.mode 为 local
-    if check_command clawdbot; then
-        clawdbot config set gateway.mode local 2>/dev/null || true
+    if check_command openclaw; then
+        openclaw config set gateway.mode local 2>/dev/null || true
         log_info "Gateway 模式已设置为 local"
     fi
 }
 
-# 配置 ClawdBot 使用的 AI 模型和 API Key
-configure_clawdbot_model() {
-    log_step "配置 ClawdBot AI 模型..."
+# 配置 OpenClaw 使用的 AI 模型和 API Key
+configure_openclaw_model() {
+    log_step "配置 OpenClaw AI 模型..."
     
-    local env_file="$HOME/.clawdbot/env"
-    local clawdbot_json="$HOME/.clawdbot/clawdbot.json"
+    local env_file="$HOME/.openclaw/env"
+    local openclaw_json="$HOME/.openclaw/openclaw.json"
     
     # 创建环境变量文件
     cat > "$env_file" << EOF
-# ClawdBot 环境变量配置
+# OpenClaw 环境变量配置
 # 由安装脚本自动生成: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
 
@@ -378,58 +384,58 @@ EOF
     log_info "环境变量配置已保存到: $env_file"
     
     # 设置默认模型
-    if check_command clawdbot; then
-        local clawdbot_model=""
+    if check_command openclaw; then
+        local openclaw_model=""
         local use_custom_provider=false
         
         # 如果使用自定义 BASE_URL，需要配置自定义 provider
         if [ -n "$BASE_URL" ] && [ "$AI_PROVIDER" = "anthropic" ]; then
             use_custom_provider=true
-            configure_custom_provider "$AI_PROVIDER" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$clawdbot_json"
-            clawdbot_model="anthropic-custom/$AI_MODEL"
+            configure_custom_provider "$AI_PROVIDER" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$openclaw_json"
+            openclaw_model="anthropic-custom/$AI_MODEL"
         elif [ -n "$BASE_URL" ] && [ "$AI_PROVIDER" = "openai" ]; then
             use_custom_provider=true
-            configure_custom_provider "$AI_PROVIDER" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$clawdbot_json"
-            clawdbot_model="openai-custom/$AI_MODEL"
+            configure_custom_provider "$AI_PROVIDER" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$openclaw_json"
+            openclaw_model="openai-custom/$AI_MODEL"
         else
             case "$AI_PROVIDER" in
                 anthropic)
-                    clawdbot_model="anthropic/$AI_MODEL"
+                    openclaw_model="anthropic/$AI_MODEL"
                     ;;
                 openai|groq|mistral)
-                    clawdbot_model="openai/$AI_MODEL"
+                    openclaw_model="openai/$AI_MODEL"
                     ;;
                 openrouter)
-                    clawdbot_model="openrouter/$AI_MODEL"
+                    openclaw_model="openrouter/$AI_MODEL"
                     ;;
                 google)
-                    clawdbot_model="google/$AI_MODEL"
+                    openclaw_model="google/$AI_MODEL"
                     ;;
                 ollama)
-                    clawdbot_model="ollama/$AI_MODEL"
+                    openclaw_model="ollama/$AI_MODEL"
                     ;;
             esac
         fi
         
-        if [ -n "$clawdbot_model" ]; then
+        if [ -n "$openclaw_model" ]; then
             # 加载环境变量
             source "$env_file"
             
             # 设置默认模型（显示错误信息以便调试）
             # 添加 || true 防止 set -e 导致脚本退出
             local set_result
-            set_result=$(clawdbot models set "$clawdbot_model" 2>&1) || true
+            set_result=$(openclaw models set "$openclaw_model" 2>&1) || true
             local set_exit=$?
             
             if [ $set_exit -eq 0 ]; then
-                log_info "默认模型已设置为: $clawdbot_model"
+                log_info "默认模型已设置为: $openclaw_model"
             else
-                log_warn "模型设置可能失败: $clawdbot_model"
+                log_warn "模型设置可能失败: $openclaw_model"
                 echo -e "  ${GRAY}$set_result${NC}" | head -3
                 
                 # 尝试直接使用 config set
                 log_info "尝试使用 config set 设置模型..."
-                clawdbot config set models.default "$clawdbot_model" 2>/dev/null || true
+                openclaw config set models.default "$openclaw_model" 2>/dev/null || true
             fi
         fi
     fi
@@ -529,7 +535,7 @@ try {
         log_info "使用 node 配置自定义 Provider..."
         
         # 将变量写入临时文件，避免 shell 转义问题
-        local tmp_vars="/tmp/clawdbot_provider_vars_$$.json"
+        local tmp_vars="/tmp/openclaw_provider_vars_$$.json"
         cat > "$tmp_vars" << EOFVARS
 {
     "config_file": "$config_file",
@@ -609,7 +615,7 @@ console.log('Custom provider configured: ' + vars.provider_id);
         log_info "使用 python3 配置自定义 Provider..."
         
         # 将变量写入临时文件，避免 shell 转义问题
-        local tmp_vars="/tmp/clawdbot_provider_vars_$$.json"
+        local tmp_vars="/tmp/openclaw_provider_vars_$$.json"
         cat > "$tmp_vars" << EOFVARS
 {
     "config_file": "$config_file",
@@ -717,9 +723,9 @@ add_env_to_shell() {
     
     if [ -n "$shell_rc" ]; then
         # 检查是否已添加
-        if ! grep -q "source.*clawdbot/env" "$shell_rc" 2>/dev/null; then
+        if ! grep -q "source ~/.openclaw/env" "$shell_rc" 2>/dev/null; then
             echo "" >> "$shell_rc"
-            echo "# ClawdBot 环境变量" >> "$shell_rc"
+            echo "# OpenClaw 环境变量" >> "$shell_rc"
             echo "[ -f \"$env_file\" ] && source \"$env_file\"" >> "$shell_rc"
             log_info "环境变量已添加到: $shell_rc"
         fi
@@ -728,30 +734,30 @@ add_env_to_shell() {
 
 # ================================ 配置向导 ================================
 
-# create_default_config 已移除 - ClawdBot 使用 clawdbot.json 和环境变量
+# create_default_config 已移除 - OpenClaw 使用 openclaw.json 和环境变量
 
 run_onboard_wizard() {
     log_step "运行配置向导..."
     
     echo ""
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${WHITE}           🧙 ClawdBot 核心配置向导${NC}"
+    echo -e "${WHITE}           🧙 OpenClaw 核心配置向导${NC}"
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
     # 检查是否已有配置
     local skip_ai_config=false
     local skip_identity_config=false
-    local env_file="$HOME/.clawdbot/env"
+    local env_file="$HOME/.openclaw/env"
     
     if [ -f "$env_file" ]; then
         echo -e "${YELLOW}检测到已有配置！${NC}"
         echo ""
         
         # 显示当前模型配置
-        if check_command clawdbot; then
-            echo -e "${CYAN}当前 ClawdBot 配置:${NC}"
-            clawdbot models status 2>/dev/null | head -10 || true
+        if check_command openclaw; then
+            echo -e "${CYAN}当前 OpenClaw 配置:${NC}"
+            openclaw models status 2>/dev/null | head -10 || true
             echo ""
         fi
         
@@ -764,7 +770,7 @@ run_onboard_wizard() {
                 # 从 env 文件读取配置进行测试
                 source "$env_file"
                 # 获取当前模型
-                AI_MODEL=$(clawdbot config get models.default 2>/dev/null | sed 's|.*/||')
+                AI_MODEL=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
                 if [ -n "$ANTHROPIC_API_KEY" ]; then
                     AI_PROVIDER="anthropic"
                     AI_KEY="$ANTHROPIC_API_KEY"
@@ -794,8 +800,8 @@ run_onboard_wizard() {
     # AI 配置
     if [ "$skip_ai_config" = false ]; then
         setup_ai_provider
-        # 先配置 ClawdBot（设置环境变量和自定义 provider），然后再测试
-        configure_clawdbot_model
+        # 先配置 OpenClaw（设置环境变量和自定义 provider），然后再测试
+        configure_openclaw_model
         test_api_connection
     else
         # 即使跳过配置，也可选择测试连接
@@ -834,7 +840,7 @@ setup_ai_provider() {
     echo "  6) ⚡ Groq (超快推理)"
     echo "  7) 🌬️ Mistral AI"
     echo ""
-    echo -e "${GRAY}提示: Anthropic 支持自定义 API 地址（通过 clawdbot.json 配置自定义 Provider）${NC}"
+    echo -e "${GRAY}提示: Anthropic 支持自定义 API 地址（通过 openclaw.json 配置自定义 Provider）${NC}"
     echo ""
     echo -en "${YELLOW}请选择 AI 提供商 [1-7] (默认: 1): ${NC}"; read ai_choice < "$TTY_INPUT"
     ai_choice=${ai_choice:-1}
@@ -1037,31 +1043,31 @@ test_api_connection() {
     local retry_count=0
     
     # 确保环境变量已加载
-    local env_file="$HOME/.clawdbot/env"
+    local env_file="$HOME/.openclaw/env"
     [ -f "$env_file" ] && source "$env_file"
     
-    if ! check_command clawdbot; then
-        echo -e "${YELLOW}ClawdBot 未安装，跳过测试${NC}"
+    if ! check_command openclaw; then
+        echo -e "${YELLOW}OpenClaw 未安装，跳过测试${NC}"
         return 0
     fi
     
     # 显示当前模型配置
     echo -e "${CYAN}当前模型配置:${NC}"
-    clawdbot models status 2>&1 | grep -E "Default|Auth|effective" | head -5
+    openclaw models status 2>&1 | grep -E "Default|Auth|effective" | head -5
     echo ""
     
     while [ "$test_passed" = false ] && [ $retry_count -lt $max_retries ]; do
-        echo -e "${YELLOW}运行 clawdbot agent --local 测试...${NC}"
+        echo -e "${YELLOW}运行 openclaw agent --local 测试...${NC}"
         echo ""
         
-        # 使用 clawdbot agent --local 测试（添加超时）
+        # 使用 openclaw agent --local 测试（添加超时）
         local result
         local exit_code
         
         # 使用 timeout 命令（如果可用），否则直接运行
         # 注意：添加 || true 防止 set -e 导致脚本退出
         if command -v timeout &> /dev/null; then
-            result=$(timeout 30 clawdbot agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
+            result=$(timeout 30 openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
             exit_code=${PIPESTATUS[0]}
             # 如果 exit_code 为空，从 $? 获取（兼容不同 shell）
             [ -z "$exit_code" ] && exit_code=$?
@@ -1069,7 +1075,7 @@ test_api_connection() {
                 result="测试超时（30秒）"
             fi
         else
-            result=$(clawdbot agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
+            result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
             exit_code=$?
         fi
         
@@ -1084,7 +1090,7 @@ test_api_connection() {
         
         if [ $exit_code -eq 0 ] && ! echo "$result" | grep -qiE "error|failed|401|403|Unknown model|超时"; then
             test_passed=true
-            echo -e "${GREEN}✓ ClawdBot AI 测试成功！${NC}"
+            echo -e "${GREEN}✓ OpenClaw AI 测试成功！${NC}"
             echo ""
             # 显示 AI 响应（过滤掉空行）
             local ai_response=$(echo "$result" | grep -v "^$" | head -5)
@@ -1094,7 +1100,7 @@ test_api_connection() {
             fi
         else
             retry_count=$((retry_count + 1))
-            echo -e "${RED}✗ ClawdBot AI 测试失败 (退出码: $exit_code)${NC}"
+            echo -e "${RED}✗ OpenClaw AI 测试失败 (退出码: $exit_code)${NC}"
             echo ""
             echo -e "  ${RED}错误:${NC}"
             echo "$result" | head -5 | sed 's/^/    /'
@@ -1106,7 +1112,7 @@ test_api_connection() {
                 
                 # 提供修复建议
                 if echo "$result" | grep -q "Unknown model"; then
-                    echo -e "${YELLOW}提示: 模型不被识别，建议运行: clawdbot configure --section model${NC}"
+                    echo -e "${YELLOW}提示: 模型不被识别，建议运行: openclaw onboard --section model${NC}"
                 elif echo "$result" | grep -q "401\|Incorrect API key"; then
                     echo -e "${YELLOW}提示: API 配置可能不正确${NC}"
                 fi
@@ -1114,7 +1120,7 @@ test_api_connection() {
                 
                 if confirm "是否重新配置 AI Provider？" "y"; then
                     setup_ai_provider
-                    configure_clawdbot_model
+                    configure_openclaw_model
                 else
                     echo -e "${YELLOW}继续使用当前配置...${NC}"
                     test_passed=true  # 允许跳过
@@ -1127,8 +1133,8 @@ test_api_connection() {
         echo -e "${RED}API 连接测试失败${NC}"
         echo ""
         echo "建议运行以下命令手动配置:"
-        echo "  clawdbot configure --section model"
-        echo "  clawdbot doctor"
+        echo "  openclaw onboard --section model"
+        echo "  openclaw doctor"
         echo ""
         if confirm "是否仍然继续安装？" "y"; then
             log_warn "跳过连接测试，继续安装..."
@@ -1255,15 +1261,15 @@ setup_daemon() {
 }
 
 setup_systemd() {
-    cat > /tmp/clawdbot.service << EOF
+    cat > /tmp/openclaw.service << EOF
 [Unit]
-Description=ClawdBot AI Assistant
+Description=OpenClaw AI Assistant
 After=network.target
 
 [Service]
 Type=simple
 User=$USER
-ExecStart=$(which clawdbot) start --daemon
+ExecStart=$(which openclaw) start --daemon
 Restart=on-failure
 RestartSec=10
 
@@ -1271,9 +1277,9 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-    sudo mv /tmp/clawdbot.service /etc/systemd/system/
+    sudo mv /tmp/openclaw.service /etc/systemd/system/
     sudo systemctl daemon-reload
-    sudo systemctl enable clawdbot
+    sudo systemctl enable openclaw
     
     log_info "Systemd 服务已配置"
 }
@@ -1281,16 +1287,16 @@ EOF
 setup_launchd() {
     mkdir -p "$HOME/Library/LaunchAgents"
     
-    cat > "$HOME/Library/LaunchAgents/com.clawdbot.agent.plist" << EOF
+    cat > "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.clawdbot.agent</string>
+    <string>com.openclaw.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$(which clawdbot)</string>
+        <string>$(which openclaw)</string>
         <string>start</string>
         <string>--daemon</string>
     </array>
@@ -1306,7 +1312,7 @@ setup_launchd() {
 </plist>
 EOF
 
-    launchctl load "$HOME/Library/LaunchAgents/com.clawdbot.agent.plist" 2>/dev/null || true
+    launchctl load "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" 2>/dev/null || true
     
     log_info "LaunchAgent 已配置"
 }
@@ -1320,44 +1326,44 @@ print_success() {
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "${WHITE}配置目录:${NC}"
-    echo "  ClawdBot 配置: ~/.clawdbot/"
-    echo "  环境变量配置: ~/.clawdbot/env"
+    echo "  OpenClaw 配置: ~/.openclaw/"
+    echo "  环境变量配置: ~/.openclaw/env"
     echo ""
     echo -e "${CYAN}常用命令:${NC}"
-    echo "  clawdbot gateway start   # 后台启动服务"
-    echo "  clawdbot gateway stop    # 停止服务"
-    echo "  clawdbot gateway status  # 查看状态"
-    echo "  clawdbot models status   # 查看模型配置"
-    echo "  clawdbot channels list   # 查看渠道列表"
-    echo "  clawdbot doctor          # 诊断问题"
+    echo "  openclaw gateway start   # 后台启动服务"
+    echo "  openclaw gateway stop    # 停止服务"
+    echo "  openclaw gateway status  # 查看状态"
+    echo "  openclaw models status   # 查看模型配置"
+    echo "  openclaw channels list   # 查看渠道列表"
+    echo "  openclaw doctor          # 诊断问题"
     echo ""
     echo -e "${PURPLE}📚 官方文档: https://clawd.bot/docs${NC}"
     echo -e "${PURPLE}💬 社区支持: https://github.com/$GITHUB_REPO/discussions${NC}"
     echo ""
 }
 
-# 启动 ClawdBot Gateway 服务
-start_clawdbot_service() {
+# 启动 OpenClaw Gateway 服务
+start_openclaw_service() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${WHITE}           🚀 启动 ClawdBot 服务${NC}"
+    echo -e "${WHITE}           🚀 启动 OpenClaw 服务${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
     # 加载环境变量
-    local env_file="$HOME/.clawdbot/env"
+    local env_file="$HOME/.openclaw/env"
     if [ -f "$env_file" ]; then
         source "$env_file"
         log_info "已加载环境变量"
     fi
     
     # 检查是否已有服务在运行
-    if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
-        log_warn "ClawdBot Gateway 已在运行"
+    if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
+        log_warn "OpenClaw Gateway 已在运行"
         echo ""
         if confirm "是否重启服务？" "y"; then
-            clawdbot gateway stop 2>/dev/null || true
-            pkill -f "clawdbot.*gateway" 2>/dev/null || true
+            openclaw gateway stop 2>/dev/null || true
+            pkill -f "openclaw.*gateway" 2>/dev/null || true
             sleep 2
         else
             return 0
@@ -1369,16 +1375,16 @@ start_clawdbot_service() {
     
     if command -v setsid &> /dev/null; then
         if [ -f "$env_file" ]; then
-            setsid bash -c "source $env_file && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+            setsid bash -c "source $env_file && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            setsid clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+            setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
         fi
     else
         # 备用方案：nohup + disown
         if [ -f "$env_file" ]; then
-            nohup bash -c "source $env_file && exec clawdbot gateway --port 18789" > /tmp/clawdbot-gateway.log 2>&1 &
+            nohup bash -c "source $env_file && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
         else
-            nohup clawdbot gateway --port 18789 > /tmp/clawdbot-gateway.log 2>&1 &
+            nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
         fi
         disown 2>/dev/null || true
     fi
@@ -1386,22 +1392,22 @@ start_clawdbot_service() {
     sleep 3
     
     # 检查启动状态
-    if pgrep -f "clawdbot.*gateway" > /dev/null 2>&1; then
+    if pgrep -f "openclaw.*gateway" > /dev/null 2>&1; then
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${GREEN}           ✓ ClawdBot Gateway 已启动！${NC}"
+        echo -e "${GREEN}           ✓ OpenClaw Gateway 已启动！${NC}"
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
-        echo -e "  ${CYAN}日志文件:${NC} /tmp/clawdbot-gateway.log"
-        echo -e "  ${CYAN}查看日志:${NC} tail -f /tmp/clawdbot-gateway.log"
-        echo -e "  ${CYAN}停止服务:${NC} clawdbot gateway stop"
+        echo -e "  ${CYAN}日志文件:${NC} /tmp/openclaw-gateway.log"
+        echo -e "  ${CYAN}查看日志:${NC} tail -f /tmp/openclaw-gateway.log"
+        echo -e "  ${CYAN}停止服务:${NC} openclaw gateway stop"
         echo ""
-        log_info "ClawdBot 现在可以接收消息了！"
+        log_info "OpenClaw 现在可以接收消息了！"
     else
         log_error "Gateway 启动失败"
         echo ""
-        echo -e "${YELLOW}请查看日志: tail -f /tmp/clawdbot-gateway.log${NC}"
-        echo -e "${YELLOW}或手动启动: source ~/.clawdbot/env && clawdbot gateway${NC}"
+        echo -e "${YELLOW}请查看日志: tail -f /tmp/openclaw-gateway.log${NC}"
+        echo -e "${YELLOW}或手动启动: source ~/.openclaw/env && openclaw gateway${NC}"
     fi
 }
 
@@ -1459,7 +1465,7 @@ run_config_menu() {
 main() {
     print_banner
     
-    echo -e "${YELLOW}⚠️  警告: ClawdBot 需要完全的计算机权限${NC}"
+    echo -e "${YELLOW}⚠️  警告: OpenClaw 需要完全的计算机权限${NC}"
     echo -e "${YELLOW}    不建议在主要工作电脑上安装，建议使用专用服务器或虚拟机${NC}"
     echo ""
     
@@ -1473,18 +1479,18 @@ main() {
     check_root
     install_dependencies
     create_directories
-    install_clawdbot
+    install_openclaw
     run_onboard_wizard
     setup_daemon
     print_success
     
     # 询问是否启动服务
-    if confirm "是否现在启动 ClawdBot 服务？" "y"; then
-        start_clawdbot_service
+    if confirm "是否现在启动 OpenClaw 服务？" "y"; then
+        start_openclaw_service
     else
         echo ""
         echo -e "${CYAN}稍后可以通过以下命令启动服务:${NC}"
-        echo "  source ~/.clawdbot/env && clawdbot gateway"
+        echo "  source ~/.openclaw/env && openclaw gateway"
         echo ""
     fi
     
@@ -1509,7 +1515,7 @@ main() {
     fi
     
     echo ""
-    echo -e "${GREEN}🦞 ClawdBot 安装完成！祝你使用愉快！${NC}"
+    echo -e "${GREEN}🦞 OpenClaw 安装完成！祝你使用愉快！${NC}"
     echo ""
 }
 
