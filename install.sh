@@ -1400,6 +1400,7 @@ run_config_menu() {
     local config_menu_path="./config-menu.sh"
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local local_config_menu="$script_dir/config-menu.sh"
+    local menu_script=""
     
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1409,33 +1410,38 @@ run_config_menu() {
     
     # 优先使用本地的 config-menu.sh（脚本同目录）
     if [ -f "$local_config_menu" ]; then
+        menu_script="$local_config_menu"
         log_info "使用本地配置菜单: $local_config_menu"
-        chmod +x "$local_config_menu"
-        bash "$local_config_menu"
-        return $?
-    fi
-    
     # 检查当前目录是否已有
-    if [ -f "$config_menu_path" ]; then
+    elif [ -f "$config_menu_path" ]; then
+        menu_script="$config_menu_path"
         log_info "使用已下载的配置菜单: $config_menu_path"
-        chmod +x "$config_menu_path"
-        bash "$config_menu_path"
-        return $?
+    else
+        # 从 GitHub 下载到当前目录
+        log_step "从 GitHub 下载配置菜单..."
+        if curl -fsSL "$GITHUB_RAW_URL/config-menu.sh" -o "$config_menu_path"; then
+            chmod +x "$config_menu_path"
+            log_info "配置菜单下载成功: $config_menu_path"
+            menu_script="$config_menu_path"
+        else
+            log_error "配置菜单下载失败"
+            echo -e "${YELLOW}你可以稍后手动下载运行:${NC}"
+            echo "  curl -fsSL $GITHUB_RAW_URL/config-menu.sh -o config-menu.sh && bash config-menu.sh"
+            return 1
+        fi
     fi
     
-    # 从 GitHub 下载到当前目录
-    log_step "从 GitHub 下载配置菜单..."
-    if curl -fsSL "$GITHUB_RAW_URL/config-menu.sh" -o "$config_menu_path"; then
-        chmod +x "$config_menu_path"
-        log_info "配置菜单下载成功"
-        bash "$config_menu_path"
-        return $?
+    # 确保有执行权限
+    chmod +x "$menu_script" 2>/dev/null || true
+    
+    # 启动配置菜单（使用 /dev/tty 确保交互正常）
+    echo ""
+    if [ -e /dev/tty ]; then
+        bash "$menu_script" < /dev/tty
     else
-        log_error "配置菜单下载失败"
-        echo -e "${YELLOW}你可以稍后手动下载运行:${NC}"
-        echo "  curl -fsSL $GITHUB_RAW_URL/config-menu.sh | bash"
-        return 1
+        bash "$menu_script"
     fi
+    return $?
 }
 
 # ================================ 主函数 ================================
@@ -1474,14 +1480,21 @@ main() {
     
     # 询问是否打开配置菜单进行详细配置
     echo ""
-    if confirm "是否打开配置菜单进行详细配置（渠道配置等）？" "n"; then
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${WHITE}           📝 配置菜单${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${GRAY}配置菜单支持: 渠道配置、身份设置、安全配置、服务管理等${NC}"
+    echo ""
+    echo -e "${WHITE}💡 下次可以直接运行配置菜单:${NC}"
+    echo -e "   ${CYAN}bash ./config-menu.sh${NC}"
+    echo ""
+    if confirm "是否现在打开配置菜单？" "n"; then
         run_config_menu
     else
         echo ""
         echo -e "${CYAN}稍后可以通过以下命令打开配置菜单:${NC}"
         echo "  bash ./config-menu.sh"
-        echo "  # 或从 GitHub 下载运行:"
-        echo "  curl -fsSL $GITHUB_RAW_URL/config-menu.sh -o config-menu.sh && bash config-menu.sh"
         echo ""
     fi
     

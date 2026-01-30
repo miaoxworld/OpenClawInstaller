@@ -8,6 +8,31 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 
+# ================================ TTY 检测 ================================
+# 当通过 curl | bash 或被其他脚本调用时，stdin 可能不是终端
+# 需要从 /dev/tty 读取用户输入
+if [ -t 0 ]; then
+    # stdin 是终端
+    TTY_INPUT="/dev/stdin"
+else
+    # stdin 是管道，使用 /dev/tty
+    if [ -e /dev/tty ]; then
+        TTY_INPUT="/dev/tty"
+    else
+        echo "错误: 无法获取终端输入，请直接运行此脚本"
+        echo "用法: bash config-menu.sh"
+        exit 1
+    fi
+fi
+
+# 统一的读取函数（支持非 TTY 模式）
+read_input() {
+    local prompt="$1"
+    local var_name="$2"
+    echo -en "$prompt"
+    read $var_name < "$TTY_INPUT"
+}
+
 # ================================ 颜色定义 ================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -75,7 +100,8 @@ log_error() {
 
 press_enter() {
     echo ""
-    read -p "$(echo -e "${GRAY}按 Enter 键继续...${NC}")"
+    echo -en "${GRAY}按 Enter 键继续...${NC}"
+    read < "$TTY_INPUT"
 }
 
 confirm() {
@@ -88,7 +114,8 @@ confirm() {
         local prompt="[y/N]"
     fi
     
-    read -p "$(echo -e "${YELLOW}$message $prompt: ${NC}")" response
+    echo -en "${YELLOW}$message $prompt: ${NC}"
+    read response < "$TTY_INPUT"
     response=${response:-$default}
     
     case "$response" in
@@ -723,7 +750,8 @@ config_ai_model() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-14]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-14]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1) config_anthropic ;;
@@ -1615,7 +1643,8 @@ config_channels() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-7]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-7]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1) config_telegram ;;
@@ -2280,7 +2309,8 @@ config_security() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-5]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-5]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1)
@@ -2378,7 +2408,8 @@ manage_service() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-7]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-7]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1)
@@ -2973,7 +3004,8 @@ advanced_settings() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-7]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-7]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1)
@@ -3173,7 +3205,8 @@ quick_test_menu() {
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [0-9]: ${NC}")" choice
+    echo -en "${YELLOW}请选择 [0-9]: ${NC}"
+    read choice < "$TTY_INPUT"
     
     case $choice in
         1) quick_test_ai ;;
@@ -3553,7 +3586,8 @@ main() {
     # 主循环
     while true; do
         show_main_menu
-        read -p "$(echo -e "${YELLOW}请选择 [0-9]: ${NC}")" choice
+        echo -en "${YELLOW}请选择 [0-9]: ${NC}"
+        read choice < "$TTY_INPUT"
         
         case $choice in
             1) show_status ;;
