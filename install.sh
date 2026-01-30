@@ -469,7 +469,7 @@ configure_custom_provider() {
     mkdir -p "$config_dir" 2>/dev/null || true
     
     # 确定 API 类型
-    local api_type="openai-chat"
+    local api_type="openai-responses"
     if [ "$provider" = "anthropic" ]; then
         api_type="anthropic-messages"
     fi

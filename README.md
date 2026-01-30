@@ -59,6 +59,8 @@
 - **Google Antigravity** - Google 实验性多模型 API
 
 > 💡 **自定义 API 地址**: Anthropic Claude 和 OpenAI GPT 都支持自定义 API 地址，可接入 OneAPI/NewAPI/API 代理等服务。配置时先输入自定义地址，再输入 API Key。
+>
+> ⚠️ **OpenAI 中转要求**: 自定义 OpenAI API 地址必须支持 `v1/responses` 路径（OpenAI Responses API），不仅仅是传统的 `v1/chat/completions`。请确认您的中转服务已支持此接口。
 
 ### 📱 多渠道接入
 
@@ -178,6 +180,8 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/ClawdBotInstaller/main/c
 2. **先输入自定义 API 地址**（留空使用官方 API）
 3. 输入 API Key（官方 Key 从 [OpenAI Platform](https://platform.openai.com/) 获取）
 4. 选择模型
+
+> ⚠️ **中转服务要求**: 如使用自定义 API 地址，中转服务必须支持 OpenAI 的 **Responses API** (`v1/responses` 路径)，而非仅支持传统的 Chat Completions API (`v1/chat/completions`)。部分老旧或功能不全的中转服务可能不支持此接口，请提前确认。
 
 #### Ollama 本地模型
 
