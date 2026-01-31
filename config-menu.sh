@@ -4718,8 +4718,10 @@ except: print('')
     else
         echo -e "${YELLOW}未检测到飞书配置，请手动输入:${NC}"
         echo ""
-        read -p "$(echo -e "${YELLOW}App ID: ${NC}")" app_id
-        read -p "$(echo -e "${YELLOW}App Secret: ${NC}")" app_secret
+        echo -en "${YELLOW}App ID: ${NC}"
+        read app_id < "$TTY_INPUT"
+        echo -en "${YELLOW}App Secret: ${NC}"
+        read app_secret < "$TTY_INPUT"
         
         if [ -z "$app_id" ] || [ -z "$app_secret" ]; then
             log_error "App ID 和 App Secret 不能为空"
@@ -4733,7 +4735,8 @@ except: print('')
     echo -e "${CYAN}如需发送测试消息，请输入群组 Chat ID（留空跳过）:${NC}"
     echo -e "${GRAY}获取方式: 群设置 → 群信息 → 群号${NC}"
     echo ""
-    read -p "$(echo -e "${YELLOW}Chat ID (可选): ${NC}")" chat_id
+    echo -en "${YELLOW}Chat ID (可选): ${NC}"
+    read chat_id < "$TTY_INPUT"
     
     test_feishu_bot "$app_id" "$app_secret" "$chat_id"
     
