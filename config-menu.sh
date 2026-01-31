@@ -3241,7 +3241,7 @@ install_feishu_plugin() {
         return 0
     else
         echo ""
-        log_warn "自动安装失败，尝试手动安装..."
+        log_warn "clawdbot安装失败，正在尝试npm安装@m1heng-clawd/feishu..."
         echo ""
         
         # 尝试使用 npm 直接安装
@@ -3408,48 +3408,44 @@ config_feishu_app() {
     
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${WHITE}✅ 第四步完成！应用配置已保存${NC}"
+    echo -e "${WHITE}✅ 配置已保存！${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "App ID: ${WHITE}${feishu_app_id:0:15}...${NC}"
     echo -e "连接模式: ${WHITE}WebSocket 长连接${NC}"
     echo -e "${GREEN}✓ 无需公网服务器${NC}"
     echo ""
-    echo -e "${WHITE}━━━ 第五步: 配置事件订阅 (飞书后台) ━━━${NC}"
+    echo -e "${YELLOW}⚠️  重要: 需要先启动 Gateway 服务！${NC}"
+    echo -e "${CYAN}   启动后才能在飞书后台配置长连接${NC}"
     echo ""
-    echo -e "${CYAN}📋 请在飞书开放平台完成以下配置:${NC}"
+    
+    if confirm "是否现在启动/重启 Gateway？" "y"; then
+        restart_gateway_for_channel
+    fi
+    
+    echo ""
+    echo -e "${WHITE}━━━ 第六步: 配置事件订阅 (飞书后台) ━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}⚠️ 请确保 ClawdBot Gateway 服务已启动${NC}"
+    echo ""
+    echo -e "${CYAN}📋 在飞书开放平台完成以下配置:${NC}"
     echo ""
     echo -e "  ${WHITE}1. 事件与回调 → 选择「使用长连接接收事件」${NC}"
     echo -e "     ${GREEN}✓ 无需公网服务器，无需 Webhook 地址${NC}"
+    echo -e "     ${YELLOW}⚠️ 如果无法保存，请确认 Gateway 已启动${NC}"
     echo ""
     echo -e "  ${WHITE}2. 添加事件订阅:${NC}"
     echo "     • im.message.receive_v1 (接收消息，必须)"
     echo "     • im.message.message_read_v1 (已读回执，可选)"
     echo "     • im.chat.member.bot.added_v1 (机器人入群，可选)"
     echo ""
-    echo -e "${WHITE}━━━ 第六步: 发布应用并添加到群组 ━━━${NC}"
+    echo -e "${WHITE}━━━ 第七步: 添加机器人到群组 ━━━${NC}"
     echo ""
-    echo -e "${CYAN}📋 发布应用:${NC}"
-    echo "  1. 版本管理与发布 → 创建版本"
-    echo "  2. 设置可用范围（选择可使用此应用的人/部门）"
-    echo "  3. 提交审核（内部应用通常自动通过）"
+    echo -e "${CYAN}📋 在飞书客户端添加机器人:${NC}"
+    echo "  1. 打开目标群组 → 设置（右上角 ⚙️）"
+    echo "  2. 群机器人 → 添加机器人"
+    echo "  3. 搜索你的机器人名称并添加"
     echo ""
-    echo -e "${CYAN}📋 添加机器人到群组:${NC}"
-    echo "  ${WHITE}方法一: 在飞书客户端添加${NC}"
-    echo "    1. 打开目标群组 → 设置（右上角 ⚙️）"
-    echo "    2. 群机器人 → 添加机器人"
-    echo "    3. 搜索你的机器人名称并添加"
-    echo ""
-    echo "  ${WHITE}方法二: 在开放平台配置默认群组${NC}"
-    echo "    1. 应用功能 → 机器人"
-    echo "    2. 配置「消息卡片请求网址」等（可选）"
-    echo ""
-    echo -e "${YELLOW}⚠️  重要: 需要重启 Gateway 才能生效！${NC}"
-    echo ""
-    
-    if confirm "是否现在重启 Gateway？" "y"; then
-        restart_gateway_for_channel
-    fi
     
     # 询问是否测试
     echo ""
