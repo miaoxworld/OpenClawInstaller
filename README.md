@@ -1,8 +1,8 @@
 # 🦞 OpenClaw 一键部署工具
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.0.0-blue.svg" alt="Version">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-green.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/Version-2.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
 </p>
 
@@ -153,11 +153,11 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/c
 
 **主流服务商:**
 - **Anthropic Claude** - claude-sonnet-4-5 / claude-opus-4-5 / claude-haiku-4-5 *(支持自定义 API 地址)*
-- **OpenAI GPT** - gpt-4o / gpt-4o-mini / gpt-4-turbo *(支持自定义 API 地址，需支持 v1/responses)*
-- **Google Gemini** - gemini-2.0-flash / gemini-1.5-pro / gemini-1.5-flash
+- **OpenAI GPT** - gpt-5 / gpt-5-mini / gpt-4o *(支持自定义 API 地址，支持 Responses/Completions)*
+- **Google Gemini** - gemini-2.5-flash / gemini-2.5-pro / gemini-2.0-flash
 
 **多模型网关:**
-- **OpenRouter** - 多模型网关，一个 Key 用遍所有模型 (claude-sonnet-4 / gpt-4o / gemini-pro-1.5)
+- **OpenRouter** - 多模型网关，一个 Key 用遍所有模型 (claude-sonnet-4-5 / gpt-5 / gemini-2.5-flash)
 
 **快速推理:**
 - **Groq** - 超快推理，llama-3.3-70b-versatile / llama-3.1-8b-instant / mixtral-8x7b
@@ -165,6 +165,23 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/c
 
 **本地部署:**
 - **Ollama** - 本地部署，无需 API Key (llama3 / llama3:70b / mistral)
+
+**自定义 API Provider:**
+- **Custom API** - 可手动配置 Provider 名称、Base URL、模型名、API 协议
+- 支持协议: `openai-completions` / `openai-responses` / `anthropic-messages`
+- 适配场景: OneAPI/NewAPI、私有网关、企业代理、中转平台
+
+### 🛠️ 自动修复机制
+
+部署脚本已内置错误检测与自动修复能力，遇到常见错误会自动处理并继续执行：
+
+- npm 权限错误 (`EACCES`) 自动修复全局安装目录
+- npm 网络错误 (`ETIMEDOUT` / `ECONNRESET` / `ENOTFOUND`) 自动切换镜像重试
+- npm 缓存损坏自动清理缓存
+- apt/dpkg 锁冲突自动解锁和恢复
+- 缺少编译工具 (`node-gyp`) 自动补装依赖
+- 端口占用 (`EADDRINUSE`) 自动释放占用进程
+- 内存不足/磁盘不足给出修复建议并尝试缓解
 
 > 💡 **自定义 API 地址**: Anthropic Claude 和 OpenAI GPT 都支持自定义 API 地址，可接入 OneAPI/NewAPI/API 代理等服务。配置时先输入自定义地址，再输入 API Key。
 >

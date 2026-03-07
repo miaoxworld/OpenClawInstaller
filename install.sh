@@ -2,7 +2,7 @@
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                                                                           ║
-# ║   🦞 OpenClaw 一键部署脚本 v1.0.0                                          ║
+# ║   🦞 OpenClaw 一键部署脚本 v2.0.0                                          ║
 # ║   智能 AI 助手部署工具 - 支持多平台多模型                                    ║
 # ║                                                                           ║
 # ║   GitHub: https://github.com/miaoxworld/OpenClawInstaller                 ║
@@ -15,7 +15,9 @@
 #   或本地执行: chmod +x install.sh && ./install.sh
 #
 
-set -e
+# 不使用 set -e，改为手动错误处理以支持自动修复和重试
+set +e
+set -o pipefail
 
 # ================================ TTY 检测 ================================
 # 当通过 curl | bash 运行时，stdin 是管道，需要从 /dev/tty 读取用户输入
@@ -45,6 +47,8 @@ MIN_NODE_VERSION=22
 GITHUB_REPO="miaoxworld/OpenClawInstaller"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 WINDOWS_MODE=""  # native 或 wsl2
+CUSTOM_PROVIDER_NAME=""  # 自定义 API Provider 名称
+MAX_RETRY=3  # 错误重试次数
 
 # ================================ 工具函数 ================================
 
@@ -59,7 +63,7 @@ print_banner() {
     ╚██████╔╝██║     ███████╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
      ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝   
                                                                          
-              🦞 智能 AI 助手一键部署工具 v1.0.0 🦞
+              🦞 智能 AI 助手一键部署工具 v2.0.0 🦞
     
 EOF
     echo -e "${NC}"
@@ -147,6 +151,187 @@ print_step_done() {
     local step_num="$1"
     local description="$2"
     echo -e "${GREEN}  ✓ 步骤 ${step_num} 完成: ${description}${NC}"
+}
+
+# ================================ 错误诊断与自动修复 ================================
+
+# 诊断错误并尝试自动修复
+# 返回 0 表示已修复可重试，返回 1 表示无法自动修复
+diagnose_and_fix() {
+    local error_output="$1"
+    local context="$2"
+    local fixed=false
+
+    # npm 权限问题 (EACCES)
+    if echo "$error_output" | grep -qi "EACCES\|permission denied.*npm"; then
+        log_info "🔧 检测到 npm 权限问题，正在修复..."
+        mkdir -p "$HOME/.npm-global" 2>/dev/null || true
+        npm config set prefix "$HOME/.npm-global" 2>/dev/null || true
+        export PATH="$HOME/.npm-global/bin:$PATH"
+        log_info "已设置 npm 全局目录为 \$HOME/.npm-global"
+        fixed=true
+    fi
+
+    # npm 网络超时
+    if echo "$error_output" | grep -qi "ETIMEDOUT\|ECONNRESET\|ENOTFOUND\|EAI_AGAIN\|fetch failed\|network"; then
+        log_info "🔧 检测到网络问题，尝试切换 npm 镜像源..."
+        local current_registry
+        current_registry=$(npm config get registry 2>/dev/null) || true
+        if echo "$current_registry" | grep -q "npmmirror"; then
+            npm config set registry https://registry.npmjs.org 2>/dev/null || true
+            log_info "已切换回 npm 官方源"
+        else
+            npm config set registry https://registry.npmmirror.com 2>/dev/null || true
+            log_info "已切换到国内 npmmirror 镜像源"
+        fi
+        fixed=true
+    fi
+
+    # npm 缓存损坏
+    if echo "$error_output" | grep -qi "ENOTEMPTY\|EINTEGRITY\|cache.*corrupt\|Verification failed"; then
+        log_info "🔧 检测到 npm 缓存问题，正在清理..."
+        npm cache clean --force 2>/dev/null || true
+        log_info "npm 缓存已清理"
+        fixed=true
+    fi
+
+    # apt-get 锁定
+    if echo "$error_output" | grep -qi "dpkg.*lock\|apt.*lock\|Could not get lock"; then
+        log_info "🔧 检测到 apt 锁定，等待释放..."
+        sleep 5
+        sudo rm -f /var/lib/dpkg/lock-frontend 2>/dev/null || true
+        sudo rm -f /var/lib/apt/lists/lock 2>/dev/null || true
+        sudo dpkg --configure -a 2>/dev/null || true
+        fixed=true
+    fi
+
+    # 缺少编译工具 (node-gyp)
+    if echo "$error_output" | grep -qi "make.*not found\|gcc.*not found\|g++.*not found\|gyp ERR\|node-gyp"; then
+        log_info "🔧 检测到缺少编译工具，正在安装..."
+        case "$OS" in
+            ubuntu|debian) sudo apt-get install -y build-essential python3 2>/dev/null || true ;;
+            centos|rhel|fedora) sudo yum groupinstall -y "Development Tools" 2>/dev/null || true ;;
+            macos) xcode-select --install 2>/dev/null || true ;;
+        esac
+        fixed=true
+    fi
+
+    # Node.js 版本不兼容
+    if echo "$error_output" | grep -qi "engine.*node\|Unsupported engine\|requires.*node"; then
+        log_info "🔧 检测到 Node.js 版本不兼容"
+        log_warn "当前 Node.js: $(node -v 2>/dev/null || echo '未安装')"
+        log_info "需要 Node.js v${MIN_NODE_VERSION}+，请手动升级"
+        fixed=true
+    fi
+
+    # 端口占用
+    if echo "$error_output" | grep -qi "EADDRINUSE\|address already in use\|port.*already"; then
+        log_info "🔧 检测到端口占用，尝试释放..."
+        local port=18789
+        local pid
+        pid=$(lsof -ti :$port 2>/dev/null | head -1) || true
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+            sleep 2
+            log_info "已停止占用端口 $port 的进程 (PID: $pid)"
+            fixed=true
+        fi
+    fi
+
+    # SSL/TLS 证书问题
+    if echo "$error_output" | grep -qi "SSL\|CERT_\|certificate.*expired\|self.signed"; then
+        log_info "🔧 检测到 SSL 证书问题，尝试修复..."
+        npm config set strict-ssl false 2>/dev/null || true
+        export NODE_TLS_REJECT_UNAUTHORIZED=0
+        log_warn "已临时放宽 SSL 检查 (建议后续修复系统证书)"
+        fixed=true
+    fi
+
+    # 磁盘空间不足
+    if echo "$error_output" | grep -qi "ENOSPC\|No space left\|disk.*full"; then
+        log_info "🔧 检测到磁盘空间不足，尝试清理..."
+        npm cache clean --force 2>/dev/null || true
+        case "$OS" in
+            ubuntu|debian)
+                sudo apt-get clean 2>/dev/null || true
+                sudo apt-get autoremove -y 2>/dev/null || true
+                ;;
+        esac
+        log_warn "已清理缓存。如空间仍不足请手动清理磁盘"
+        fixed=true
+    fi
+
+    # 内存不足
+    if echo "$error_output" | grep -qi "ENOMEM\|out of memory\|Cannot allocate\|JavaScript heap"; then
+        log_warn "⚠️  检测到内存不足"
+        echo -e "${YELLOW}建议:${NC}"
+        echo -e "  1. 关闭其他占用内存的程序"
+        echo -e "  2. 增加 Node.js 内存限制:"
+        echo -e "     ${CYAN}export NODE_OPTIONS='--max-old-space-size=4096'${NC}"
+        export NODE_OPTIONS="--max-old-space-size=4096"
+        fixed=true
+    fi
+
+    # DNS 解析失败
+    if echo "$error_output" | grep -qi "getaddrinfo.*ENOTFOUND\|DNS.*failed"; then
+        log_info "🔧 检测到 DNS 解析问题..."
+        if [ -f /etc/resolv.conf ]; then
+            echo -e "${YELLOW}当前 DNS:${NC}"
+            grep "nameserver" /etc/resolv.conf 2>/dev/null | head -2
+            echo -e "${YELLOW}可手动修改 /etc/resolv.conf 添加:${NC}"
+            echo -e "  ${CYAN}nameserver 8.8.8.8${NC}"
+            echo -e "  ${CYAN}nameserver 114.114.114.114${NC}"
+        fi
+        npm config set registry https://registry.npmmirror.com 2>/dev/null || true
+        fixed=true
+    fi
+
+    if [ "$fixed" = true ]; then
+        return 0
+    fi
+    return 1
+}
+
+# 带错误自动修复的 npm 全局安装
+safe_npm_install() {
+    local package="$1"
+    local attempt=0
+
+    while [ $attempt -lt $MAX_RETRY ]; do
+        attempt=$((attempt + 1))
+        log_step "[$attempt/$MAX_RETRY] 安装 $package..."
+
+        local error_output
+        error_output=$(npm install -g "$package" --unsafe-perm 2>&1)
+        local exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+            log_info "$package 安装成功"
+            return 0
+        fi
+
+        log_warn "安装失败 ($attempt/$MAX_RETRY)"
+        echo "$error_output" | tail -5
+
+        if [ $attempt -lt $MAX_RETRY ]; then
+            if diagnose_and_fix "$error_output" "npm install $package"; then
+                log_info "已自动修复，重新尝试安装..."
+                sleep 2
+            else
+                log_warn "无法自动修复，等待 ${attempt}s 后重试..."
+                sleep $attempt
+            fi
+        fi
+    done
+
+    log_error "$package 安装最终失败 (已重试 $MAX_RETRY 次)"
+    echo ""
+    echo -e "${YELLOW}排查建议:${NC}"
+    echo -e "  1. 检查网络: ${CYAN}ping registry.npmjs.org${NC}"
+    echo -e "  2. 切换镜像: ${CYAN}npm config set registry https://registry.npmmirror.com${NC}"
+    echo -e "  3. 清理缓存: ${CYAN}npm cache clean --force${NC}"
+    echo -e "  4. 手动安装: ${CYAN}npm install -g $package${NC}"
+    return 1
 }
 
 # ================================ 版本检测 ================================
@@ -320,7 +505,30 @@ install_nodejs() {
             ;;
     esac
     
-    log_info "Node.js 安装完成: $(node -v)"
+    # 验证安装结果，如果失败尝试自动修复
+    if ! check_command node; then
+        log_warn "Node.js 安装可能失败，尝试自动诊断..."
+        diagnose_and_fix "node not found after install on $OS" "install nodejs"
+        # 重试一次
+        case "$OS" in
+            ubuntu|debian)
+                curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 2>/dev/null || true
+                sudo apt-get install -y nodejs 2>/dev/null || true
+                ;;
+            centos|rhel|fedora)
+                curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - 2>/dev/null || true
+                sudo yum install -y nodejs 2>/dev/null || true
+                ;;
+        esac
+    fi
+
+    if check_command node; then
+        log_info "Node.js 安装完成: $(node -v)"
+    else
+        log_error "Node.js 安装失败，请手动安装 v$MIN_NODE_VERSION+"
+        echo -e "  下载地址: ${CYAN}https://nodejs.org/zh-cn${NC}"
+        exit 1
+    fi
 }
 
 install_git() {
@@ -329,37 +537,47 @@ install_git() {
         case "$OS" in
             macos)
                 install_homebrew
-                brew install git
+                brew install git 2>&1 || log_warn "Git 安装失败"
                 ;;
             ubuntu|debian)
-                sudo apt-get update && sudo apt-get install -y git
+                sudo apt-get update 2>/dev/null || true
+                sudo apt-get install -y git 2>&1 || log_warn "Git 安装失败"
                 ;;
             centos|rhel|fedora)
-                sudo yum install -y git
+                sudo yum install -y git 2>&1 || log_warn "Git 安装失败"
                 ;;
             arch|manjaro)
-                sudo pacman -S git --noconfirm
+                sudo pacman -S git --noconfirm 2>&1 || log_warn "Git 安装失败"
                 ;;
         esac
     fi
-    log_info "Git 版本: $(git --version)"
+    if check_command git; then
+        log_info "Git 版本: $(git --version)"
+    else
+        log_warn "Git 未安装，部分功能可能受限"
+    fi
 }
 
 install_dependencies() {
     log_step "检查并安装依赖..."
     
-    # 安装基础依赖
+    # 安装基础依赖（非致命错误仅警告）
     case "$OS" in
         ubuntu|debian)
-            sudo apt-get update
-            sudo apt-get install -y curl wget jq
+            sudo apt-get update 2>&1 || {
+                log_warn "apt-get update 失败，尝试修复..."
+                sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock 2>/dev/null || true
+                sudo dpkg --configure -a 2>/dev/null || true
+                sudo apt-get update 2>&1 || log_warn "apt-get update 仍然失败，继续安装..."
+            }
+            sudo apt-get install -y curl wget jq 2>&1 || log_warn "部分基础工具安装失败"
             ;;
         centos|rhel|fedora)
-            sudo yum install -y curl wget jq
+            sudo yum install -y curl wget jq 2>&1 || log_warn "部分基础工具安装失败"
             ;;
         macos)
             install_homebrew
-            brew install curl wget jq
+            brew install curl wget jq 2>&1 || log_warn "部分基础工具安装失败"
             ;;
     esac
     
@@ -488,7 +706,12 @@ install_windows_native() {
 
     log_info "正在从 npm 安装 OpenClaw (版本: ${OPENCLAW_VERSION})..."
     echo -e "${GRAY}(安装过程可能需要几分钟，请耐心等待...)${NC}"
-    npm install -g openclaw@$OPENCLAW_VERSION --unsafe-perm 2>&1 | tail -5
+    if safe_npm_install "openclaw@$OPENCLAW_VERSION"; then
+        log_info "npm 安装完成"
+    else
+        log_warn "npm 自动安装失败，尝试备用方案..."
+        npm install -g openclaw@$OPENCLAW_VERSION --force 2>&1 | tail -5 || true
+    fi
 
     # 验证安装
     if check_command openclaw; then
@@ -795,16 +1018,35 @@ install_openclaw() {
         fi
     fi
     
-    # 使用 npm 全局安装
+    # 使用 npm 全局安装（带自动错误修复）
     log_info "正在从 npm 安装 OpenClaw..."
-    npm install -g openclaw@$OPENCLAW_VERSION --unsafe-perm
-    
-    # 验证安装
-    if check_command openclaw; then
-        log_info "OpenClaw 安装成功: $(openclaw --version 2>/dev/null || echo 'installed')"
-        init_openclaw_config
+    if safe_npm_install "openclaw@$OPENCLAW_VERSION"; then
+        # 验证安装
+        if check_command openclaw; then
+            log_info "OpenClaw 安装成功: $(openclaw --version 2>/dev/null || echo 'installed')"
+            init_openclaw_config
+        else
+            log_warn "npm 安装成功但 openclaw 命令不可用"
+            echo -e "${YELLOW}尝试修复 PATH:${NC}"
+            local npm_prefix
+            npm_prefix=$(npm config get prefix 2>/dev/null) || true
+            if [ -n "$npm_prefix" ]; then
+                export PATH="$npm_prefix/bin:$PATH"
+                log_info "已添加 $npm_prefix/bin 到 PATH"
+            fi
+            if check_command openclaw; then
+                log_info "OpenClaw 安装成功: $(openclaw --version 2>/dev/null || echo 'installed')"
+                init_openclaw_config
+            else
+                log_error "OpenClaw 安装完成但命令不可用，请检查 PATH"
+                echo -e "  ${CYAN}export PATH=\"$(npm config get prefix 2>/dev/null)/bin:\$PATH\"${NC}"
+                exit 1
+            fi
+        fi
     else
         log_error "OpenClaw 安装失败"
+        echo -e "${YELLOW}可以手动安装后重新运行脚本:${NC}"
+        echo -e "  ${CYAN}npm install -g openclaw@latest${NC}"
         exit 1
     fi
 }
@@ -892,6 +1134,19 @@ EOF
         ollama)
             echo "export OLLAMA_HOST=${BASE_URL:-http://localhost:11434}" >> "$env_file"
             ;;
+        custom)
+            # 自定义 API: 根据 API 格式设置环境变量
+            case "$AI_API_TYPE" in
+                anthropic-messages)
+                    echo "export ANTHROPIC_API_KEY=$AI_KEY" >> "$env_file"
+                    echo "export ANTHROPIC_BASE_URL=$BASE_URL" >> "$env_file"
+                    ;;
+                *)
+                    echo "export OPENAI_API_KEY=$AI_KEY" >> "$env_file"
+                    echo "export OPENAI_BASE_URL=$BASE_URL" >> "$env_file"
+                    ;;
+            esac
+            ;;
     esac
     
     chmod 600 "$env_file"
@@ -902,8 +1157,12 @@ EOF
         local openclaw_model=""
         local use_custom_provider=false
         
-        # 如果使用自定义 BASE_URL，需要配置自定义 provider
-        if [ -n "$BASE_URL" ] && [ "$AI_PROVIDER" = "anthropic" ]; then
+        # 自定义 API 或带自定义 BASE_URL 的 provider
+        if [ "$AI_PROVIDER" = "custom" ]; then
+            use_custom_provider=true
+            configure_custom_provider "${CUSTOM_PROVIDER_NAME:-custom-api}" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$openclaw_json" "$AI_API_TYPE"
+            openclaw_model="${CUSTOM_PROVIDER_NAME:-custom-api}-custom/$AI_MODEL"
+        elif [ -n "$BASE_URL" ] && [ "$AI_PROVIDER" = "anthropic" ]; then
             use_custom_provider=true
             configure_custom_provider "$AI_PROVIDER" "$AI_KEY" "$AI_MODEL" "$BASE_URL" "$openclaw_json"
             openclaw_model="anthropic-custom/$AI_MODEL"
@@ -1369,10 +1628,11 @@ setup_ai_provider() {
     echo "  7) ⚡ Groq (超快推理)"
     echo "  8) 🌬️ Mistral AI"
     echo "  9) 🟠 Ollama (本地模型)"
+    echo " 10) 🔧 自定义 API (兼容 OpenAI/Anthropic 格式)"
     echo ""
-    echo -e "${GRAY}提示: 支持自定义 API 地址（通过 openclaw.json 配置自定义 Provider）${NC}"
+    echo -e "${GRAY}提示: 选择 10 可接入任意兼容 OpenAI 或 Anthropic 格式的第三方 API 服务${NC}"
     echo ""
-    echo -en "${YELLOW}请选择 AI 提供商 [1-9] (默认: 1): ${NC}"; read ai_choice < "$TTY_INPUT"
+    echo -en "${YELLOW}请选择 AI 提供商 [1-10] (默认: 1): ${NC}"; read ai_choice < "$TTY_INPUT"
     ai_choice=${ai_choice:-1}
     
     case $ai_choice in
@@ -1452,9 +1712,9 @@ setup_ai_provider() {
             echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
             echo ""
             echo "选择模型:"
-            echo "  1) deepseek-chat (V3.2, 推荐)"
-            echo "  2) deepseek-reasoner (R1, 推理)"
-            echo "  3) deepseek-coder"
+            echo "  1) deepseek-chat (推荐)"
+            echo "  2) deepseek-reasoner (推理增强)"
+            echo "  3) deepseek-coder (代码专用)"
             echo "  4) 自定义模型名称"
             echo -en "${YELLOW}选择模型 [1-4] (默认: 1): ${NC}"; read model_choice < "$TTY_INPUT"
             case $model_choice in
@@ -1501,16 +1761,16 @@ setup_ai_provider() {
             echo -en "${YELLOW}自定义 API 地址 (留空使用官方): ${NC}"; read BASE_URL < "$TTY_INPUT"
             echo ""
             echo "选择模型:"
-            echo "  1) gemini-2.0-flash (推荐)"
-            echo "  2) gemini-1.5-pro"
-            echo "  3) gemini-1.5-flash"
+            echo "  1) gemini-2.5-flash (推荐)"
+            echo "  2) gemini-2.5-pro"
+            echo "  3) gemini-2.0-flash"
             echo "  4) 自定义"
             echo -en "${YELLOW}选择模型 [1-4] (默认: 1): ${NC}"; read model_choice < "$TTY_INPUT"
             case $model_choice in
-                2) AI_MODEL="gemini-1.5-pro" ;;
-                3) AI_MODEL="gemini-1.5-flash" ;;
+                2) AI_MODEL="gemini-2.5-pro" ;;
+                3) AI_MODEL="gemini-2.0-flash" ;;
                 4) echo -en "${YELLOW}输入模型名称: ${NC}"; read AI_MODEL < "$TTY_INPUT" ;;
-                *) AI_MODEL="gemini-2.0-flash" ;;
+                *) AI_MODEL="gemini-2.5-flash" ;;
             esac
             ;;
         6)
@@ -1525,16 +1785,16 @@ setup_ai_provider() {
             BASE_URL=${BASE_URL:-"https://openrouter.ai/api/v1"}
             echo ""
             echo "选择模型:"
-            echo "  1) anthropic/claude-sonnet-4 (推荐)"
-            echo "  2) openai/gpt-4o"
-            echo "  3) google/gemini-pro-1.5"
+            echo "  1) anthropic/claude-sonnet-4-5 (推荐)"
+            echo "  2) openai/gpt-5"
+            echo "  3) google/gemini-2.5-flash"
             echo "  4) 自定义"
             echo -en "${YELLOW}选择模型 [1-4] (默认: 1): ${NC}"; read model_choice < "$TTY_INPUT"
             case $model_choice in
-                2) AI_MODEL="openai/gpt-4o" ;;
-                3) AI_MODEL="google/gemini-pro-1.5" ;;
+                2) AI_MODEL="openai/gpt-5" ;;
+                3) AI_MODEL="google/gemini-2.5-flash" ;;
                 4) echo -en "${YELLOW}输入模型名称: ${NC}"; read AI_MODEL < "$TTY_INPUT" ;;
-                *) AI_MODEL="anthropic/claude-sonnet-4" ;;
+                *) AI_MODEL="anthropic/claude-sonnet-4-5" ;;
             esac
             ;;
         7)
@@ -1605,6 +1865,44 @@ setup_ai_provider() {
                 3) AI_MODEL="mistral" ;;
                 4) echo -en "${YELLOW}输入模型名称: ${NC}"; read AI_MODEL < "$TTY_INPUT" ;;
                 *) AI_MODEL="llama3" ;;
+            esac
+            ;;
+        10)
+            AI_PROVIDER="custom"
+            CUSTOM_PROVIDER_NAME=""
+            echo ""
+            echo -e "${CYAN}配置自定义 API${NC}"
+            echo -e "${GRAY}支持任何兼容 OpenAI 或 Anthropic 格式的 API 服务${NC}"
+            echo -e "${GRAY}如: OneAPI, NewAPI, FastGPT, 各类中转服务等${NC}"
+            echo ""
+            echo -en "${YELLOW}Provider 名称 (用于标识, 如 my-api): ${NC}"; read CUSTOM_PROVIDER_NAME < "$TTY_INPUT"
+            CUSTOM_PROVIDER_NAME=${CUSTOM_PROVIDER_NAME:-"custom-api"}
+            echo ""
+            echo -en "${YELLOW}API 地址 (如 https://api.example.com/v1): ${NC}"; read BASE_URL < "$TTY_INPUT"
+            if [ -z "$BASE_URL" ]; then
+                log_error "API 地址不能为空"
+                echo -e "${YELLOW}请重新运行配置向导${NC}"
+                return 1
+            fi
+            echo ""
+            echo -en "${YELLOW}API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            echo ""
+            echo -en "${YELLOW}模型名称 (如 gpt-4o, claude-3-sonnet, deepseek-chat 等): ${NC}"; read AI_MODEL < "$TTY_INPUT"
+            if [ -z "$AI_MODEL" ]; then
+                log_error "模型名称不能为空"
+                return 1
+            fi
+            echo ""
+            echo -e "${CYAN}选择 API 兼容格式:${NC}"
+            echo "  1) openai-completions (兼容 /v1/chat/completions，最通用)"
+            echo "  2) openai-responses (OpenAI Responses API)"
+            echo "  3) anthropic-messages (Anthropic Messages API)"
+            echo -e "${GRAY}提示: 大多数第三方中转服务使用 openai-completions 格式${NC}"
+            echo -en "${YELLOW}选择格式 [1-3] (默认: 1): ${NC}"; read api_format_choice < "$TTY_INPUT"
+            case $api_format_choice in
+                2) AI_API_TYPE="openai-responses" ;;
+                3) AI_API_TYPE="anthropic-messages" ;;
+                *) AI_API_TYPE="openai-completions" ;;
             esac
             ;;
         *)
@@ -1978,9 +2276,19 @@ start_openclaw_service() {
         log_info "OpenClaw 现在可以接收消息了！"
     else
         log_error "Gateway 启动失败"
+        local gw_log
+        gw_log=$(cat /tmp/openclaw-gateway.log 2>/dev/null | tail -20) || true
+        if [ -n "$gw_log" ]; then
+            echo -e "${GRAY}日志摘要:${NC}"
+            echo "$gw_log" | tail -5 | sed 's/^/  /'
+            echo ""
+            if diagnose_and_fix "$gw_log" "gateway start"; then
+                log_info "已尝试自动修复，请手动重启服务"
+            fi
+        fi
         echo ""
-        echo -e "${YELLOW}请查看日志: tail -f /tmp/openclaw-gateway.log${NC}"
-        echo -e "${YELLOW}或手动启动: source ~/.openclaw/env && openclaw gateway${NC}"
+        echo -e "${YELLOW}请查看日志: ${CYAN}tail -f /tmp/openclaw-gateway.log${NC}"
+        echo -e "${YELLOW}或手动启动: ${CYAN}source ~/.openclaw/env && openclaw gateway${NC}"
     fi
 }
 
