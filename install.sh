@@ -2,16 +2,16 @@
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                                                                           ║
-# ║   🦞 OpenClaw 一键部署脚本 v2.0.0                                          ║
+# ║   🦞 OpenClaw 一键部署脚本 v2.0.1                                          ║
 # ║   智能 AI 助手部署工具 - 支持多平台多模型                                    ║
 # ║                                                                           ║
-# ║   GitHub: https://github.com/miaoxworld/OpenClawInstaller                 ║
-# ║   官方文档: https://clawd.bot/docs                                         ║
+# ║   GitHub: https://github.com/MarcusDog/OpenClawInstaller                  ║
+# ║   官方文档: https://docs.openclaw.ai                                       ║
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # 使用方法:
-#   curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/install.sh | bash
 #   或本地执行: chmod +x install.sh && ./install.sh
 #
 
@@ -44,7 +44,7 @@ NC='\033[0m' # 无颜色
 OPENCLAW_VERSION="latest"
 CONFIG_DIR="$HOME/.openclaw"
 MIN_NODE_VERSION=22
-GITHUB_REPO="miaoxworld/OpenClawInstaller"
+GITHUB_REPO="MarcusDog/OpenClawInstaller"
 GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 WINDOWS_MODE=""  # native 或 wsl2
 CUSTOM_PROVIDER_NAME=""  # 自定义 API Provider 名称
@@ -71,7 +71,7 @@ print_banner() {
     ╚██████╔╝██║     ███████╗██║ ╚████║╚██████╗███████╗██║  ██║╚███╔███╔╝
      ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝   
                                                                          
-              🦞 智能 AI 助手一键部署工具 v2.0.0 🦞
+              🦞 智能 AI 助手一键部署工具 v2.0.1 🦞
     
 EOF
     echo -e "${NC}"
@@ -184,7 +184,7 @@ diagnose_and_fix() {
     if echo "$error_output" | grep -qi "npm\.ps1\|running scripts is disabled\|cannot be loaded because running scripts"; then
         log_info "🔧 检测到 PowerShell 执行策略问题，尝试自动修复..."
         if command -v powershell.exe &> /dev/null; then
-            powershell.exe -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force" 2>/dev/null || true
+            fix_powershell_execution_policy
             log_info "已尝试设置执行策略为 RemoteSigned"
             fixed=true
         fi
@@ -274,9 +274,13 @@ diagnose_and_fix() {
         log_info "🔧 检测到端口占用，尝试释放..."
         local port=18789
         local pid
-        pid=$(lsof -ti :$port 2>/dev/null | head -1) || true
+        pid=$(get_port_pid "$port")
         if [ -n "$pid" ]; then
-            kill "$pid" 2>/dev/null || true
+            if command -v powershell.exe &> /dev/null; then
+                powershell.exe -NoProfile -Command "Stop-Process -Id $pid -Force" 2>/dev/null || kill "$pid" 2>/dev/null || true
+            else
+                kill "$pid" 2>/dev/null || true
+            fi
             sleep 2
             log_info "已停止占用端口 $port 的进程 (PID: $pid)"
             fixed=true
@@ -557,6 +561,60 @@ ensure_windows_runtime_paths() {
     fi
     if ! command -v node &> /dev/null && command -v node.exe &> /dev/null; then
         node() { node.exe "$@"; }
+    fi
+}
+
+# 获取端口对应进程 PID（跨平台，优先 lsof，Windows 回退 PowerShell）
+get_port_pid() {
+    local port="$1"
+    local pid=""
+
+    if command -v lsof &> /dev/null; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1) || true
+    fi
+
+    if [ -z "$pid" ] && command -v powershell.exe &> /dev/null; then
+        pid=$(powershell.exe -NoProfile -Command "(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)" 2>/dev/null | tr -d '\r') || true
+    fi
+
+    echo "$pid"
+}
+
+# 修复 Windows 下 PowerShell 执行策略，避免 npm.ps1/openclaw.ps1 被拦截
+fix_powershell_execution_policy() {
+    if [ "$OS" != "windows" ] && [[ "$OSTYPE" != "msys" ]] && [[ "$OSTYPE" != "cygwin" ]]; then
+        return 0
+    fi
+
+    if command -v powershell.exe &> /dev/null; then
+        powershell.exe -NoProfile -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force" 2>/dev/null || true
+    fi
+}
+
+# 显示 Dashboard 访问方式（优先 openclaw dashboard；失败时给 token 指引）
+show_dashboard_access_hint() {
+    if ! check_command openclaw; then
+        return 0
+    fi
+
+    local dashboard_url
+    dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
+
+    echo ""
+    if [ -n "$dashboard_url" ]; then
+        echo -e "${GREEN}Dashboard 访问地址:${NC}"
+        echo -e "  ${WHITE}$dashboard_url${NC}"
+    else
+        echo -e "${YELLOW}未能自动获取 Dashboard URL，可执行:${NC}"
+        echo -e "  ${WHITE}openclaw dashboard${NC}"
+        local auth_token
+        auth_token=$(openclaw config get gateway.auth.token 2>/dev/null || true)
+        if [ -n "$auth_token" ] && [ "$auth_token" != "undefined" ]; then
+            echo -e "${CYAN}如页面提示 unauthorized，请在 Dashboard 鉴权框粘贴 gateway.auth.token${NC}"
+        else
+            echo -e "${YELLOW}未检测到 gateway.auth.token，可运行:${NC}"
+            echo -e "  ${WHITE}openclaw doctor --generate-gateway-token${NC}"
+        fi
     fi
 }
 
@@ -884,6 +942,7 @@ install_windows_native() {
     echo ""
 
     ensure_windows_runtime_paths
+    fix_powershell_execution_policy
     run_windows_preflight_check "native"
 
     # === 步骤 1: 检查 Node.js ===
@@ -951,7 +1010,7 @@ install_windows_native() {
         if [ "$current_policy" = "Restricted" ] || [ "$current_policy" = "AllSigned" ]; then
             log_warn "当前执行策略为 $current_policy，需要修改"
             echo -e "${YELLOW}将自动设置执行策略为 RemoteSigned...${NC}"
-            powershell.exe -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force" 2>/dev/null || true
+            fix_powershell_execution_policy
             log_info "PowerShell 执行策略已更新"
         else
             log_info "PowerShell 执行策略已满足要求: $current_policy"
@@ -1396,6 +1455,11 @@ configure_openclaw_model() {
 # OpenClaw 环境变量配置
 # 由安装脚本自动生成: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
+
+    # 规范化模型名称（避免用户输入 deepseek/deepseek-chat 这种带前缀写法）
+    if [ "$AI_PROVIDER" = "deepseek" ]; then
+        AI_MODEL="${AI_MODEL#deepseek/}"
+    fi
 
     # 根据 AI_PROVIDER 设置对应的环境变量
     case "$AI_PROVIDER" in
@@ -1896,6 +1960,21 @@ apply_deepseek_preset() {
 
 run_onboard_wizard() {
     log_step "运行配置向导..."
+
+    if check_command openclaw; then
+        if confirm "是否优先使用官方向导 openclaw onboard --install-daemon？(推荐)" "y"; then
+            echo ""
+            log_step "启动官方向导..."
+            openclaw onboard --install-daemon
+            local onboard_exit=$?
+            if [ $onboard_exit -eq 0 ]; then
+                log_info "官方向导执行完成"
+                return 0
+            else
+                log_warn "官方向导返回异常 (exit: $onboard_exit)，将回退到内置向导"
+            fi
+        fi
+    fi
     
     echo ""
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -2606,9 +2685,12 @@ start_openclaw_service() {
     fi
     
     # 使用端口检测判断是否已有服务在运行（更可靠）
-    local existing_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local existing_pid
+    existing_pid=$(get_port_pid 18789)
     if [ -n "$existing_pid" ]; then
         log_warn "OpenClaw Gateway 已在运行 (PID: $existing_pid)"
+        echo ""
+        show_dashboard_access_hint
         echo ""
         if confirm "是否重启服务？" "y"; then
             openclaw gateway stop 2>/dev/null || true
@@ -2641,7 +2723,8 @@ start_openclaw_service() {
     sleep 3
     
     # 使用端口检测判断服务是否启动成功（更可靠）
-    local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local gateway_pid
+    gateway_pid=$(get_port_pid 18789)
     if [ -n "$gateway_pid" ]; then
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -2651,6 +2734,7 @@ start_openclaw_service() {
         echo -e "  ${CYAN}查看状态:${NC} openclaw gateway status"
         echo -e "  ${CYAN}查看日志:${NC} tail -f /tmp/openclaw-gateway.log"
         echo -e "  ${CYAN}停止服务:${NC} openclaw gateway stop"
+        show_dashboard_access_hint
         echo ""
         log_info "OpenClaw 现在可以接收消息了！"
     else
@@ -2778,7 +2862,12 @@ main() {
                 print_success
 
                 # 启动服务
-                if confirm "是否现在启动 OpenClaw 服务？" "y"; then
+                local native_running_pid
+                native_running_pid=$(get_port_pid 18789)
+                if [ -n "$native_running_pid" ]; then
+                    log_info "检测到 Gateway 已运行 (PID: $native_running_pid)，跳过重复启动"
+                    show_dashboard_access_hint
+                elif confirm "是否现在启动 OpenClaw 服务？" "y"; then
                     start_openclaw_service
                 else
                     echo ""
@@ -2831,7 +2920,12 @@ main() {
     print_success
     
     # 询问是否启动服务
-    if confirm "是否现在启动 OpenClaw 服务？" "y"; then
+    local running_pid
+    running_pid=$(get_port_pid 18789)
+    if [ -n "$running_pid" ]; then
+        log_info "检测到 Gateway 已运行 (PID: $running_pid)，跳过重复启动"
+        show_dashboard_access_hint
+    elif confirm "是否现在启动 OpenClaw 服务？" "y"; then
         start_openclaw_service
     else
         echo ""
@@ -2841,20 +2935,20 @@ main() {
     fi
     print_step_done "6/6" "服务配置完成"
     
-    # 推荐桌面版
+    # 推荐仓库入口
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${WHITE}           🖥️ 推荐：OpenClaw Manager 桌面版${NC}"
+    echo -e "${WHITE}           📦 推荐：OpenClawInstaller 维护仓库${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "${WHITE}如果你更喜欢图形界面，推荐下载 OpenClaw Manager 桌面应用：${NC}"
+    echo -e "${WHITE}获取最新脚本、文档和问题反馈入口：${NC}"
     echo ""
-    echo -e "  🎨 ${CYAN}现代化 UI${NC} - 基于 Tauri 2.0 + React + Rust 构建"
-    echo -e "  📊 ${CYAN}实时监控${NC} - 仪表盘查看服务状态、内存、运行时间"
-    echo -e "  🔧 ${CYAN}可视化配置${NC} - AI 模型、消息渠道一键配置"
+    echo -e "  🔧 ${CYAN}安装脚本${NC} - 一键安装与自动修复"
+    echo -e "  🧭 ${CYAN}配置菜单${NC} - AI 模型与渠道管理"
     echo -e "  💻 ${CYAN}跨平台${NC} - 支持 macOS、Windows、Linux"
+    echo -e "  🐞 ${CYAN}问题反馈${NC} - GitHub Issues / Discussions"
     echo ""
-    echo -e "  👉 ${PURPLE}下载地址: https://github.com/miaoxworld/openclaw-manager${NC}"
+    echo -e "  👉 ${PURPLE}下载地址: https://github.com/MarcusDog/OpenClawInstaller${NC}"
     echo ""
     
     # 询问是否打开配置菜单进行详细配置

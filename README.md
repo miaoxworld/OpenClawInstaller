@@ -1,7 +1,7 @@
 # 🦞 OpenClaw 一键部署工具
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-2.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.0.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
 </p>
@@ -35,29 +35,29 @@
 
 ## 🚀 快速开始
 
-### 🖥️ 桌面版 OpenClaw Manager（推荐）
+### 📦 当前维护仓库（推荐）
 
-如果你更喜欢图形界面，推荐使用 **OpenClaw Manager** 桌面应用：
+建议优先使用当前维护仓库中的脚本与文档：
 
 <p align="center">
-  <a href="https://github.com/miaoxworld/openclaw-manager">
-    <img src="https://img.shields.io/badge/下载桌面版-OpenClaw%20Manager-blue?style=for-the-badge&logo=github" alt="Download">
+  <a href="https://github.com/MarcusDog/OpenClawInstaller">
+    <img src="https://img.shields.io/badge/访问仓库-OpenClaw%20Installer-blue?style=for-the-badge&logo=github" alt="Repository">
   </a>
 </p>
 
-- 🎨 **现代化 UI** - 基于 Tauri 2.0 + React + TypeScript + Rust 构建
-- 📊 **实时监控** - 仪表盘查看服务状态、内存、运行时间
-- 🔧 **可视化配置** - AI 模型、消息渠道一键配置
+- 🔧 **安装脚本** - 一键安装与自动修复流程
+- 🧭 **配置菜单** - AI 模型与渠道配置入口
 - 💻 **跨平台** - 支持 macOS、Windows、Linux
+- 📚 **文档同步** - 安装命令与说明统一维护
 
-👉 **下载地址**: [github.com/miaoxworld/openclaw-manager](https://github.com/miaoxworld/openclaw-manager)
+👉 **下载地址**: [github.com/MarcusDog/OpenClawInstaller](https://github.com/MarcusDog/OpenClawInstaller)
 
 ---
 
 ### 方式一：一键安装（命令行版）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/install.sh | bash
 ```
 
 安装脚本会自动：
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/i
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/miaoxworld/OpenClawInstaller.git
+git clone https://github.com/MarcusDog/OpenClawInstaller.git
 cd OpenClawInstaller
 
 # 2. 添加执行权限
@@ -140,7 +140,7 @@ openclaw gateway start
 bash ~/.openclaw/config-menu.sh
 
 # 或从 GitHub 下载运行
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/config-menu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/config-menu.sh | bash
 ```
 
 ## ✨ 功能特性
@@ -549,6 +549,11 @@ rm -rf ~/.openclaw
 
 ## 📜 更新日志
 
+### v2.0.1 (2026-03-09)
+- 🛠️ 修复 `install.sh` 与 `config-menu.sh` 的控制流断裂和语法损坏问题
+- 🪟 强化 Windows/Git Bash 环境下的流程稳定性和启动检测
+- 🔁 统一仓库地址与安装命令链接到当前维护仓库
+
 ### v1.0.0 (2026-01-29)
 - 🎉 首次发布
 - ✨ 支持一键安装部署
@@ -565,11 +570,10 @@ rm -rf ~/.openclaw
 ## 🔗 相关链接
 
 - [OpenClaw 官网](https://clawd.bot)
-- [官方文档](https://clawd.bot/docs)
-- [🖥️ OpenClaw Manager 桌面版](https://github.com/miaoxworld/openclaw-manager) - 图形界面管理工具
-- [安装工具仓库](https://github.com/miaoxworld/OpenClawInstaller) - 命令行版本
+- [官方文档](https://docs.openclaw.ai)
+- [安装工具仓库](https://github.com/MarcusDog/OpenClawInstaller) - 命令行版本
 - [OpenClaw 主仓库](https://github.com/openclaw/openclaw)
-- [社区讨论](https://github.com/miaoxworld/OpenClawInstaller/discussions)
+- [社区讨论](https://github.com/MarcusDog/OpenClawInstaller/discussions)
 
 ---
 

@@ -235,15 +235,98 @@ get_env_value() {
 
 # ================================ 测试功能 ================================
 
+# 跨平台命令检测（兼容 Windows 的 .cmd/.exe）
+check_command() {
+    local cmd="$1"
+    command -v "$cmd" &> /dev/null && return 0
+    command -v "${cmd}.cmd" &> /dev/null && return 0
+    command -v "${cmd}.exe" &> /dev/null && return 0
+    return 1
+}
+
+# Windows 场景补全 PATH 和命令 shim
+ensure_windows_runtime_paths() {
+    if [[ "$OSTYPE" != "msys" ]] && [[ "$OSTYPE" != "cygwin" ]]; then
+        return 0
+    fi
+
+    local appdata_unix=""
+    if command -v powershell.exe &> /dev/null; then
+        local appdata_win
+        appdata_win=$(powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('ApplicationData')" 2>/dev/null | tr -d '\r') || true
+        if [ -n "$appdata_win" ] && command -v cygpath &> /dev/null; then
+            appdata_unix=$(cygpath -u "$appdata_win" 2>/dev/null) || true
+        fi
+    fi
+
+    local p
+    for p in "$HOME/AppData/Roaming/npm" "/c/Users/$USER/AppData/Roaming/npm" "$appdata_unix/npm"; do
+        [ -z "$p" ] && continue
+        if [ -d "$p" ]; then
+            case ":$PATH:" in
+                *":$p:"*) ;;
+                *) export PATH="$p:$PATH" ;;
+            esac
+        fi
+    done
+
+    if ! command -v openclaw &> /dev/null && command -v openclaw.cmd &> /dev/null; then
+        openclaw() { openclaw.cmd "$@"; }
+    fi
+    if ! command -v npm &> /dev/null && command -v npm.cmd &> /dev/null; then
+        npm() { npm.cmd "$@"; }
+    fi
+}
+
+# 获取端口对应 PID（跨平台）
+get_port_pid() {
+    local port="$1"
+    local pid=""
+
+    if command -v lsof &> /dev/null; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1) || true
+    fi
+
+    if [ -z "$pid" ] && command -v powershell.exe &> /dev/null; then
+        pid=$(powershell.exe -NoProfile -Command "(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)" 2>/dev/null | tr -d '\r') || true
+    fi
+
+    echo "$pid"
+}
+
+# 输出 Dashboard 访问提示（优先 openclaw dashboard）
+show_dashboard_access_hint() {
+    if ! check_openclaw_installed; then
+        return 0
+    fi
+
+    local dashboard_url
+    dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
+    if [ -n "$dashboard_url" ]; then
+        echo -e "${GREEN}✓ Dashboard URL:${NC}"
+        echo -e "  ${WHITE}$dashboard_url${NC}"
+    else
+        echo -e "${YELLOW}提示: 运行 ${WHITE}openclaw dashboard${NC} 获取访问地址${NC}"
+        local auth_token
+        auth_token=$(openclaw config get gateway.auth.token 2>/dev/null || true)
+        if [ -n "$auth_token" ] && [ "$auth_token" != "undefined" ]; then
+            echo -e "${GRAY}若提示 unauthorized，请将 gateway.auth.token 粘贴到 Dashboard 鉴权框${NC}"
+        fi
+    fi
+}
+
 # 检查 OpenClaw 是否已安装
 check_openclaw_installed() {
-    command -v openclaw &> /dev/null
+    ensure_windows_runtime_paths
+    check_command openclaw
 }
 
 # 自动修复运行环境（npm/路径/配置目录/doctor）
 auto_fix_runtime_environment() {
     echo ""
     log_info "执行环境自动修复..."
+
+    ensure_windows_runtime_paths
 
     mkdir -p "$CONFIG_DIR" "$BACKUP_DIR" 2>/dev/null || true
     chmod 700 "$CONFIG_DIR" 2>/dev/null || true
@@ -306,7 +389,8 @@ restart_gateway_for_channel() {
     sleep 2
     
     # 使用端口检测判断服务是否启动成功（更可靠）
-    local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local gateway_pid
+    gateway_pid=$(get_port_pid 18789)
     
     if [ -n "$gateway_pid" ]; then
         log_info "Gateway 已重启！(PID: $gateway_pid)"
@@ -314,18 +398,8 @@ restart_gateway_for_channel() {
         
         # 获取并显示 Dashboard URL（带 token）
         echo -e "${CYAN}━━━ 获取 Dashboard URL ━━━${NC}"
-        local dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
-        if [ -n "$dashboard_url" ]; then
-            echo ""
-            echo -e "${GREEN}✓ Dashboard URL (带授权 token):${NC}"
-            echo -e "  ${WHITE}$dashboard_url${NC}"
-            echo ""
-            echo -e "${YELLOW}⚠️  请使用此 URL 访问控制界面，否则会提示 token_missing${NC}"
-        else
-            echo ""
-            echo -e "${YELLOW}提示: 运行以下命令获取带 token 的 Dashboard URL:${NC}"
-            echo -e "  ${WHITE}openclaw dashboard${NC}"
-        fi
+        echo ""
+        show_dashboard_access_hint
         echo ""
         echo -e "${CYAN}查看日志: ${WHITE}openclaw logs --follow${NC}"
         echo -e "${CYAN}停止服务: ${WHITE}openclaw gateway stop${NC}"
@@ -344,6 +418,11 @@ restart_gateway_for_channel() {
 # 检查 OpenClaw Gateway 是否运行
 check_gateway_running() {
     if check_openclaw_installed; then
+        local pid
+        pid=$(get_port_pid 18789)
+        if [ -n "$pid" ]; then
+            return 0
+        fi
         openclaw health &>/dev/null
         return $?
     fi
@@ -926,7 +1005,8 @@ show_status() {
         echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
         
         # 使用端口检测判断服务运行状态（更可靠）
-        local status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+        local status_pid
+        status_pid=$(get_port_pid 18789)
         if [ -n "$status_pid" ]; then
             echo -e "  ${GREEN}●${NC} 服务状态: ${GREEN}运行中${NC} (PID: $status_pid)"
         else
@@ -1462,18 +1542,16 @@ config_deepseek() {
     echo ""
     print_menu_item "1" "deepseek-chat (V3.2, 推荐)" "⭐"
     print_menu_item "2" "deepseek-reasoner (R1, 推理)" "🧠"
-    print_menu_item "3" "deepseek-coder (代码)" "💻"
-    print_menu_item "4" "自定义模型名称" "✏️"
+    print_menu_item "3" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-3] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
         1) model="deepseek-chat" ;;
         2) model="deepseek-reasoner" ;;
-        3) model="deepseek-coder" ;;
-        4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
         *) model="deepseek-chat" ;;
     esac
     
@@ -2896,6 +2974,27 @@ run_channel_diagnostics() {
     openclaw pairing list whatsapp 2>/dev/null | sed 's/^/    /' || echo "    (无待审批或命令不可用)"
 
     echo ""
+    echo -e "${CYAN}5) 飞书插件/渠道一致性检查${NC}"
+    local fei_plugins
+    fei_plugins=$(openclaw plugins list 2>/dev/null | grep -i feishu || true)
+    if [ -n "$fei_plugins" ]; then
+        echo -e "  ${GREEN}✓${NC} 检测到飞书插件:"
+        echo "$fei_plugins" | sed 's/^/    /'
+    else
+        echo -e "  ${YELLOW}⚠${NC} 未检测到飞书插件"
+    fi
+
+    # 检查 line 误配（与飞书同凭据）
+    local fei_id line_id
+    fei_id=$(openclaw config get channels.feishu.accounts.main.appId 2>/dev/null || openclaw config get channels.feishu.appId 2>/dev/null || true)
+    line_id=$(openclaw config get channels.line.accounts.main.appId 2>/dev/null || openclaw config get channels.line.appId 2>/dev/null || true)
+    if [ -n "$fei_id" ] && [ -n "$line_id" ] && [ "$fei_id" = "$line_id" ]; then
+        echo -e "  ${YELLOW}⚠${NC} 检测到 Feishu 与 LINE 可能混淆（App ID 相同）"
+    else
+        echo -e "  ${GREEN}✓${NC} 未发现 Feishu/LINE 明显冲突"
+    fi
+
+    echo ""
     print_divider
     echo -e "${CYAN}可执行修复命令（可直接复制）:${NC}"
     echo "  openclaw doctor --fix"
@@ -2908,12 +3007,20 @@ run_channel_diagnostics() {
     echo "  openclaw pairing list whatsapp"
     echo "  openclaw pairing approve whatsapp <CODE>"
     echo "  openclaw logs --follow"
+    echo "  openclaw plugins install @openclaw/feishu"
     echo ""
 
     if ! check_gateway_running; then
         echo -e "${YELLOW}检测到 Gateway 未就绪，建议先执行:${NC}"
         echo "  openclaw gateway --port 18789 --verbose"
         echo ""
+    fi
+
+    if confirm "是否执行飞书插件状态自动修复（去重/冲突整理）？" "n"; then
+        normalize_feishu_plugin_state
+        openclaw plugins enable feishu 2>/dev/null || true
+        ensure_plugin_in_allow "feishu"
+        log_info "飞书插件状态已执行自动修复"
     fi
 
     press_enter
@@ -3397,10 +3504,55 @@ config_imessage() {
     press_enter
 }
 
-# 安装飞书插件（使用指定版本 0.1.2，因为新版本有问题）
+# 安装飞书插件（优先官方插件，失败回退社区插件）
+normalize_feishu_plugin_state() {
+    # 最佳努力：清理配置中的重复/冲突项（飞书与 line 混淆）
+    if [ ! -f "$OPENCLAW_JSON" ]; then
+        return 0
+    fi
+
+    if command -v node &> /dev/null; then
+                node - "$OPENCLAW_JSON" <<'NODE' >/dev/null 2>&1 || true
+const fs = require('fs');
+const p = process.argv[2];
+
+try {
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+
+    if (!cfg.plugins) cfg.plugins = {};
+    if (!Array.isArray(cfg.plugins.allow)) cfg.plugins.allow = [];
+    cfg.plugins.allow = [...new Set(cfg.plugins.allow)];
+
+    if (!cfg.channels) cfg.channels = {};
+    const feishu = cfg.channels.feishu || {};
+    const line = cfg.channels.line || {};
+
+    const fApp = feishu.appId || feishu.accounts?.main?.appId || '';
+    const fSec = feishu.appSecret || feishu.accounts?.main?.appSecret || '';
+    const lApp = line.appId || line.accounts?.main?.appId || '';
+    const lSec = line.appSecret || line.accounts?.main?.appSecret || '';
+
+    // If line credentials match feishu credentials, disable line to avoid misrouting.
+    if (fApp && fSec && lApp && lSec && fApp === lApp && fSec === lSec) {
+        line.enabled = false;
+        cfg.channels.line = line;
+    }
+
+    fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
+} catch (_) {
+    // Best effort normalization; ignore parse or IO errors.
+}
+NODE
+    fi
+
+    return 0
+}
+
 install_feishu_plugin() {
     echo -e "${YELLOW}安装飞书插件...${NC}"
     echo ""
+
+    normalize_feishu_plugin_state
     
     # 检查是否已安装飞书插件
     local installed=$(openclaw plugins list 2>/dev/null | grep -i feishu || echo "")
@@ -3410,14 +3562,19 @@ install_feishu_plugin() {
         return 0
     fi
     
-    echo -e "${CYAN}正在安装飞书插件 @m1heng-clawd/feishu ...${NC}"
+    echo -e "${CYAN}正在安装飞书插件 @openclaw/feishu ...${NC}"
     echo ""
-    
-    # 使用 openclaw plugins install 安装指定版本
-    # 注意：新版本 0.1.4 有问题（缺少 openclaw.extensions），必须使用 0.1.2
+
+    # 先尝试官方插件，失败再回退社区插件
     local install_output
-    install_output=$(openclaw plugins install @m1heng-clawd/feishu 2>&1)
+    install_output=$(openclaw plugins install @openclaw/feishu 2>&1)
     local install_exit=$?
+
+    if [ $install_exit -ne 0 ]; then
+        log_warn "官方飞书插件安装失败，尝试社区插件..."
+        install_output=$(openclaw plugins install @m1heng-clawd/feishu 2>&1)
+        install_exit=$?
+    fi
     
     # 过滤掉 banner，显示关键信息
     echo "$install_output" | grep -v "^🦞" | grep -v "^$" | head -5
@@ -3425,15 +3582,15 @@ install_feishu_plugin() {
     if [ $install_exit -eq 0 ]; then
         echo ""
         log_info "✅ 飞书插件安装成功！"
+        normalize_feishu_plugin_state
         return 0
     else
         echo ""
         log_error "插件安装失败"
         echo ""
         echo -e "${CYAN}请手动安装:${NC}"
-        echo "  openclaw plugins install @m1heng-clawd/feishu"
-        echo ""
-        echo -e "${YELLOW}⚠️  注意: 必须使用 0.1.2 版本，新版本 0.1.4 有问题${NC}"
+        echo "  openclaw plugins install @openclaw/feishu"
+        echo "  # 若失败再尝试: openclaw plugins install @m1heng-clawd/feishu"
         echo ""
         return 1
     fi
@@ -3461,7 +3618,7 @@ save_feishu_config() {
     # 使用 openclaw config set 设置凭证
     echo -e "${YELLOW}配置 App ID...${NC}"
     local set_output
-    set_output=$(openclaw config set channels.feishu.appId "$app_id" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appId "$app_id" 2>&1)
     local set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3472,7 +3629,7 @@ save_feishu_config() {
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
     echo -e "${YELLOW}配置 App Secret...${NC}"
-    set_output=$(openclaw config set channels.feishu.appSecret "$app_secret" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appSecret "$app_secret" 2>&1)
     set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3482,11 +3639,21 @@ save_feishu_config() {
     fi
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
+    # 兼容旧键（部分旧版本仍读取顶层 appId/appSecret）
+    openclaw config set channels.feishu.appId "$app_id" > /dev/null 2>&1 || true
+    openclaw config set channels.feishu.appSecret "$app_secret" > /dev/null 2>&1 || true
+
     # 设置其他默认配置
     openclaw config set channels.feishu.enabled true > /dev/null 2>&1 || true
     openclaw config set channels.feishu.connectionMode websocket > /dev/null 2>&1 || true
     openclaw config set channels.feishu.domain feishu > /dev/null 2>&1 || true
+    openclaw config set channels.feishu.dmPolicy pairing > /dev/null 2>&1 || true
+    openclaw config set channels.feishu.groupPolicy open > /dev/null 2>&1 || true
     openclaw config set channels.feishu.requireMention true > /dev/null 2>&1 || true
+
+    openclaw plugins enable feishu > /dev/null 2>&1 || true
+    ensure_plugin_in_allow "feishu"
+    normalize_feishu_plugin_state
     
     log_info "飞书渠道配置完成"
     return 0
@@ -3511,7 +3678,7 @@ config_feishu() {
     
     echo -e "${CYAN}飞书接入说明:${NC}"
     echo ""
-    echo -e "  ${WHITE}使用社区插件 @m1heng-clawd/feishu${NC}"
+    echo -e "  ${WHITE}优先使用官方插件 @openclaw/feishu${NC}"
     echo ""
     echo -e "  ${GREEN}✓ 支持 WebSocket 连接（无需公网服务器）${NC}"
     echo -e "  ${GREEN}✓ 支持私聊和群聊${NC}"
@@ -3832,6 +3999,58 @@ config_whitelist() {
 
 # ================================ 服务管理 ================================
 
+start_gateway_watchdog() {
+        local pid_file="$CONFIG_DIR/gateway-watchdog.pid"
+
+        if [ -f "$pid_file" ]; then
+                local old_pid
+                old_pid=$(cat "$pid_file" 2>/dev/null || true)
+                if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+                        log_info "守护监控已在运行 (PID: $old_pid)"
+                        return 0
+                fi
+        fi
+
+        log_info "启动 Gateway 守护监控..."
+        nohup bash -c '
+while true; do
+    pid=""
+    if command -v lsof >/dev/null 2>&1; then
+        pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    fi
+    if [ -z "$pid" ] && command -v powershell.exe >/dev/null 2>&1; then
+        pid=$(powershell.exe -NoProfile -Command "(Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)" 2>/dev/null | tr -d "\r")
+    fi
+
+    if [ -z "$pid" ]; then
+        openclaw gateway start >/tmp/openclaw-watchdog.log 2>&1 || openclaw gateway --port 18789 --verbose >>/tmp/openclaw-watchdog.log 2>&1
+    fi
+    sleep 20
+done
+' >/tmp/openclaw-watchdog.out 2>&1 &
+
+        echo $! > "$pid_file"
+        log_info "守护监控已启动 (PID: $(cat "$pid_file" 2>/dev/null))"
+        echo -e "${GRAY}日志: /tmp/openclaw-watchdog.out /tmp/openclaw-watchdog.log${NC}"
+}
+
+stop_gateway_watchdog() {
+        local pid_file="$CONFIG_DIR/gateway-watchdog.pid"
+        if [ ! -f "$pid_file" ]; then
+                log_warn "未检测到守护监控进程"
+                return 0
+        fi
+
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                sleep 1
+        fi
+        rm -f "$pid_file" 2>/dev/null || true
+        log_info "守护监控已停止"
+}
+
 manage_service() {
     clear_screen
     print_header
@@ -3841,7 +4060,8 @@ manage_service() {
     echo ""
     
     # 使用端口检测判断服务状态（更可靠）
-    local menu_status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local menu_status_pid
+    menu_status_pid=$(get_port_pid 18789)
     if [ -n "$menu_status_pid" ]; then
         echo -e "  当前状态: ${GREEN}● 运行中${NC} (PID: $menu_status_pid)"
     else
@@ -3856,13 +4076,15 @@ manage_service() {
     print_menu_item "5" "查看日志" "📋"
     print_menu_item "6" "运行诊断并修复" "🔍"
     print_menu_item "7" "安装为系统服务" "⚙️"
+    print_menu_item "8" "启用守护监控(自动拉起)" "🛡️"
+    print_menu_item "9" "停止守护监控" "🧯"
     echo ""
-    echo -e "  ${RED}[8]${NC} 🗑️  卸载 OpenClaw"
+    echo -e "  ${RED}[10]${NC} 🗑️  卸载 OpenClaw"
     echo ""
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    echo -en "${YELLOW}请选择 [0-8]: ${NC}"
+    echo -en "${YELLOW}请选择 [0-10]: ${NC}"
     read choice < "$TTY_INPUT"
     
     case $choice in
@@ -3871,20 +4093,15 @@ manage_service() {
             if command -v openclaw &> /dev/null; then
                 # 先检查服务是否已经在运行（使用端口检测，更可靠）
                 local port=18789
-                local running_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local running_pid
+                running_pid=$(get_port_pid "$port")
                 
                 if [ -n "$running_pid" ]; then
                     echo -e "${GREEN}✓ 服务已经在运行中！${NC} (PID: $running_pid)"
                     echo ""
                     
                     # 获取并显示 Dashboard URL
-                    local dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
-                    if [ -n "$dashboard_url" ]; then
-                        echo -e "${GREEN}Dashboard URL (带授权 token):${NC}"
-                        echo -e "  ${WHITE}$dashboard_url${NC}"
-                    else
-                        echo -e "${YELLOW}提示: 运行 ${WHITE}openclaw dashboard${NC} 获取访问 URL"
-                    fi
+                    show_dashboard_access_hint
                     echo ""
                     
                     if confirm "是否重启服务？" "n"; then
@@ -3903,16 +4120,17 @@ manage_service() {
                 fi
                 
                 # 检测端口是否被其他进程占用
-                local port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local port_pid
+                port_pid=$(get_port_pid "$port")
                 
                 if [ -n "$port_pid" ]; then
                     echo -e "${YELLOW}检测到端口 $port 被其他进程占用 (PID: $port_pid)${NC}"
                     if confirm "是否停止占用端口的进程？" "y"; then
                         openclaw gateway stop > /dev/null 2>&1 || true
                         sleep 1
-                        port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                        port_pid=$(get_port_pid "$port")
                         if [ -n "$port_pid" ]; then
-                            kill -9 $port_pid 2>/dev/null || true
+                            powershell.exe -NoProfile -Command "Stop-Process -Id $port_pid -Force" 2>/dev/null || kill -9 $port_pid 2>/dev/null || true
                             sleep 1
                         fi
                         log_info "已清理端口占用"
@@ -3975,7 +4193,7 @@ manage_service() {
                 local check_count=0
                 while [ $check_count -lt 5 ]; do
                     sleep 1
-                    gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                    gateway_pid=$(get_port_pid 18789)
                     if [ -n "$gateway_pid" ]; then
                         break
                     fi
@@ -3989,18 +4207,8 @@ manage_service() {
                     
                     # 获取并显示 Dashboard URL（带 token）
                     echo -e "${CYAN}━━━ 获取 Dashboard URL ━━━${NC}"
-                    local dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
-                    if [ -n "$dashboard_url" ]; then
-                        echo ""
-                        echo -e "${GREEN}✓ Dashboard URL (带授权 token):${NC}"
-                        echo -e "  ${WHITE}$dashboard_url${NC}"
-                        echo ""
-                        echo -e "${YELLOW}⚠️  请使用此 URL 访问控制界面${NC}"
-                    else
-                        echo ""
-                        echo -e "${YELLOW}提示: 运行以下命令获取带 token 的 Dashboard URL:${NC}"
-                        echo -e "  ${WHITE}openclaw dashboard${NC}"
-                    fi
+                    echo ""
+                    show_dashboard_access_hint
                     
                     echo ""
                     echo -e "${CYAN}日志文件: /tmp/openclaw-gateway.log${NC}"
@@ -4044,7 +4252,8 @@ manage_service() {
                 openclaw gateway stop 2>/dev/null || true
                 sleep 1
                 # 使用端口检测判断服务是否已停止（更可靠）
-                local stop_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local stop_pid
+                stop_pid=$(get_port_pid 18789)
                 if [ -z "$stop_pid" ]; then
                     log_info "服务已停止"
                 else
@@ -4075,20 +4284,15 @@ manage_service() {
                 sleep 2
                 
                 # 使用端口检测判断服务是否启动成功（更可靠）
-                local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local gateway_pid
+                gateway_pid=$(get_port_pid 18789)
                 
                 if [ -n "$gateway_pid" ]; then
                     log_info "服务已重启 (PID: $gateway_pid)"
                     echo ""
                     
                     # 获取并显示 Dashboard URL
-                    local dashboard_url=$(openclaw dashboard --no-open 2>/dev/null | grep -E "^https?://" | head -1)
-                    if [ -n "$dashboard_url" ]; then
-                        echo -e "${GREEN}✓ Dashboard URL:${NC}"
-                        echo -e "  ${WHITE}$dashboard_url${NC}"
-                    else
-                        echo -e "${YELLOW}提示: openclaw dashboard 获取访问 URL${NC}"
-                    fi
+                    show_dashboard_access_hint
                 else
                     log_error "重启失败"
                     echo ""
@@ -4170,6 +4374,18 @@ manage_service() {
             ;;
         8)
             echo ""
+            if command -v openclaw &> /dev/null; then
+                start_gateway_watchdog
+            else
+                log_error "OpenClaw 未安装"
+            fi
+            ;;
+        9)
+            echo ""
+            stop_gateway_watchdog
+            ;;
+        10)
+            echo ""
             echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo -e "${RED}           ⚠️  卸载 OpenClaw${NC}"
             echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -4197,7 +4413,8 @@ manage_service() {
             fi
             
             # 使用端口检测确保服务已停止
-            local uninstall_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+            local uninstall_pid
+            uninstall_pid=$(get_port_pid 18789)
             if [ -n "$uninstall_pid" ]; then
                 log_warn "强制停止服务 (PID: $uninstall_pid)..."
                 kill -9 $uninstall_pid 2>/dev/null || true
@@ -4257,10 +4474,10 @@ manage_service() {
             echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo ""
             echo -e "${CYAN}如需重新安装，请运行:${NC}"
-            echo "  curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash"
+            echo "  curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/install.sh | bash"
             echo ""
             echo -e "${CYAN}或下载桌面版:${NC}"
-            echo "  https://github.com/miaoxworld/openclaw-manager"
+            echo "  https://github.com/MarcusDog/OpenClawInstaller"
             echo ""
             
             press_enter
@@ -4317,6 +4534,11 @@ save_openclaw_ai_config() {
     local api_type="$5"  # 可选参数，用于指定 API 类型
     local custom_provider_name="$6"  # 可选参数，自定义 provider 名称
     local extra_models="$7"  # 可选参数，逗号分隔附加模型
+
+    # 兼容错误输入: deepseek/deepseek-chat -> deepseek-chat
+    if [ "$provider" = "deepseek" ]; then
+        model="${model#deepseek/}"
+    fi
 
     auto_fix_runtime_environment
     
