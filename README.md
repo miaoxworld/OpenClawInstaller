@@ -1,8 +1,8 @@
 # 🦞 OpenClaw 一键部署工具
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.0.0-blue.svg" alt="Version">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-green.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/Version-2.0.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
 </p>
 
@@ -28,36 +28,36 @@
 
 | 项目 | 要求 |
 |------|------|
-| 操作系统 | macOS 12+ / Ubuntu 20.04+ / Debian 11+ / CentOS 8+ |
+| 操作系统 | macOS 12+ / Ubuntu 20.04+ / Debian 11+ / CentOS 8+ / Windows 10+ (本地或 WSL2) |
 | Node.js | v22 或更高版本 |
 | 内存 | 最低 2GB，推荐 4GB+ |
 | 磁盘空间 | 最低 1GB |
 
 ## 🚀 快速开始
 
-### 🖥️ 桌面版 OpenClaw Manager（推荐）
+### 📦 当前维护仓库（推荐）
 
-如果你更喜欢图形界面，推荐使用 **OpenClaw Manager** 桌面应用：
+建议优先使用当前维护仓库中的脚本与文档：
 
 <p align="center">
-  <a href="https://github.com/miaoxworld/openclaw-manager">
-    <img src="https://img.shields.io/badge/下载桌面版-OpenClaw%20Manager-blue?style=for-the-badge&logo=github" alt="Download">
+  <a href="https://github.com/MarcusDog/OpenClawInstaller">
+    <img src="https://img.shields.io/badge/访问仓库-OpenClaw%20Installer-blue?style=for-the-badge&logo=github" alt="Repository">
   </a>
 </p>
 
-- 🎨 **现代化 UI** - 基于 Tauri 2.0 + React + TypeScript + Rust 构建
-- 📊 **实时监控** - 仪表盘查看服务状态、内存、运行时间
-- 🔧 **可视化配置** - AI 模型、消息渠道一键配置
+- 🔧 **安装脚本** - 一键安装与自动修复流程
+- 🧭 **配置菜单** - AI 模型与渠道配置入口
 - 💻 **跨平台** - 支持 macOS、Windows、Linux
+- 📚 **文档同步** - 安装命令与说明统一维护
 
-👉 **下载地址**: [github.com/miaoxworld/openclaw-manager](https://github.com/miaoxworld/openclaw-manager)
+👉 **下载地址**: [github.com/MarcusDog/OpenClawInstaller](https://github.com/MarcusDog/OpenClawInstaller)
 
 ---
 
 ### 方式一：一键安装（命令行版）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/install.sh | bash
 ```
 
 安装脚本会自动：
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/i
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/miaoxworld/OpenClawInstaller.git
+git clone https://github.com/MarcusDog/OpenClawInstaller.git
 cd OpenClawInstaller
 
 # 2. 添加执行权限
@@ -92,6 +92,41 @@ npm install -g openclaw
 2. 后台启动 OpenClaw Gateway
 3. 可选打开配置菜单进行渠道配置
 
+### 🪟 Windows 安装
+
+安装脚本现已支持 Windows 系统，在 Git Bash 中运行后会自动检测 Windows 并提供两种安装方式：
+
+#### 方式一：Windows 本地安装（PowerShell）
+
+直接在 Windows 上安装，不需要 WSL：
+
+1. 安装 [Node.js 22+](https://nodejs.org/zh-cn)（下载 LTS 版本）
+2. 打开 Git Bash，运行安装脚本
+3. 选择 `[1] Windows 本地安装`
+4. 脚本自动完成：设置执行策略 → npm 安装 → 配置向导
+
+```bash
+# 在 Git Bash 中运行
+./install.sh
+# 选择 1 → Windows 本地安装
+```
+
+#### 方式二：WSL2 + Ubuntu 安装（推荐）
+
+在 WSL2 中运行，提供完整 Linux 环境，兼容性最佳：
+
+1. 打开 Git Bash，运行安装脚本
+2. 选择 `[2] WSL2 + Ubuntu 安装`
+3. 脚本自动完成：启用 WSL2 → 安装 Ubuntu → 安装 Node.js → 安装 OpenClaw
+
+```bash
+# 在 Git Bash 中运行
+./install.sh
+# 选择 2 → WSL2 安装（推荐）
+```
+
+> 💡 **提示**: WSL2 安装后，在 Windows 浏览器中访问 `http://localhost:18789` 即可打开控制面板
+
 如果需要后续管理：
 
 ```bash
@@ -105,7 +140,7 @@ openclaw gateway start
 bash ~/.openclaw/config-menu.sh
 
 # 或从 GitHub 下载运行
-curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/config-menu.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MarcusDog/OpenClawInstaller/main/config-menu.sh | bash
 ```
 
 ## ✨ 功能特性
@@ -118,11 +153,11 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/c
 
 **主流服务商:**
 - **Anthropic Claude** - claude-sonnet-4-5 / claude-opus-4-5 / claude-haiku-4-5 *(支持自定义 API 地址)*
-- **OpenAI GPT** - gpt-4o / gpt-4o-mini / gpt-4-turbo *(支持自定义 API 地址，需支持 v1/responses)*
-- **Google Gemini** - gemini-2.0-flash / gemini-1.5-pro / gemini-1.5-flash
+- **OpenAI GPT** - gpt-5 / gpt-5-mini / gpt-4o *(支持自定义 API 地址，支持 Responses/Completions)*
+- **Google Gemini** - gemini-2.5-flash / gemini-2.5-pro / gemini-2.0-flash
 
 **多模型网关:**
-- **OpenRouter** - 多模型网关，一个 Key 用遍所有模型 (claude-sonnet-4 / gpt-4o / gemini-pro-1.5)
+- **OpenRouter** - 多模型网关，一个 Key 用遍所有模型 (claude-sonnet-4-5 / gpt-5 / gemini-2.5-flash)
 
 **快速推理:**
 - **Groq** - 超快推理，llama-3.3-70b-versatile / llama-3.1-8b-instant / mixtral-8x7b
@@ -130,6 +165,23 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/c
 
 **本地部署:**
 - **Ollama** - 本地部署，无需 API Key (llama3 / llama3:70b / mistral)
+
+**自定义 API Provider:**
+- **Custom API** - 可手动配置 Provider 名称、Base URL、模型名、API 协议
+- 支持协议: `openai-completions` / `openai-responses` / `anthropic-messages`
+- 适配场景: OneAPI/NewAPI、私有网关、企业代理、中转平台
+
+### 🛠️ 自动修复机制
+
+部署脚本已内置错误检测与自动修复能力，遇到常见错误会自动处理并继续执行：
+
+- npm 权限错误 (`EACCES`) 自动修复全局安装目录
+- npm 网络错误 (`ETIMEDOUT` / `ECONNRESET` / `ENOTFOUND`) 自动切换镜像重试
+- npm 缓存损坏自动清理缓存
+- apt/dpkg 锁冲突自动解锁和恢复
+- 缺少编译工具 (`node-gyp`) 自动补装依赖
+- 端口占用 (`EADDRINUSE`) 自动释放占用进程
+- 内存不足/磁盘不足给出修复建议并尝试缓解
 
 > 💡 **自定义 API 地址**: Anthropic Claude 和 OpenAI GPT 都支持自定义 API 地址，可接入 OneAPI/NewAPI/API 代理等服务。配置时先输入自定义地址，再输入 API Key。
 >
@@ -497,6 +549,11 @@ rm -rf ~/.openclaw
 
 ## 📜 更新日志
 
+### v2.0.1 (2026-03-09)
+- 🛠️ 修复 `install.sh` 与 `config-menu.sh` 的控制流断裂和语法损坏问题
+- 🪟 强化 Windows/Git Bash 环境下的流程稳定性和启动检测
+- 🔁 统一仓库地址与安装命令链接到当前维护仓库
+
 ### v1.0.0 (2026-01-29)
 - 🎉 首次发布
 - ✨ 支持一键安装部署
@@ -513,11 +570,10 @@ rm -rf ~/.openclaw
 ## 🔗 相关链接
 
 - [OpenClaw 官网](https://clawd.bot)
-- [官方文档](https://clawd.bot/docs)
-- [🖥️ OpenClaw Manager 桌面版](https://github.com/miaoxworld/openclaw-manager) - 图形界面管理工具
-- [安装工具仓库](https://github.com/miaoxworld/OpenClawInstaller) - 命令行版本
+- [官方文档](https://docs.openclaw.ai)
+- [安装工具仓库](https://github.com/MarcusDog/OpenClawInstaller) - 命令行版本
 - [OpenClaw 主仓库](https://github.com/openclaw/openclaw)
-- [社区讨论](https://github.com/miaoxworld/OpenClawInstaller/discussions)
+- [社区讨论](https://github.com/MarcusDog/OpenClawInstaller/discussions)
 
 ---
 

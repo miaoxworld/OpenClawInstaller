@@ -206,8 +206,8 @@ openclaw config set channels.feishu.domain "lark"
 - [飞书开放平台](https://open.feishu.cn/)
 - [飞书开放平台文档](https://open.feishu.cn/document/)
 - [OpenClaw 主仓库](https://github.com/openclaw/openclaw)
-- [安装工具仓库](https://github.com/miaoxworld/OpenClawInstaller)
+- [安装工具仓库](https://github.com/MarcusDog/OpenClawInstaller)
 
 ---
 
-如有问题，请在 [GitHub Issues](https://github.com/miaoxworld/OpenClawInstaller/issues) 中反馈。
+如有问题，请在 [GitHub Issues](https://github.com/MarcusDog/OpenClawInstaller/issues) 中反馈。
