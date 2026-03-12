@@ -10,19 +10,36 @@
 
 # ================================ TTY 检测 ================================
 # 当通过 curl | bash 或被其他脚本调用时，stdin 可能不是终端
-# 需要从 /dev/tty 读取用户输入
-if [ -t 0 ]; then
-    # stdin 是终端
-    TTY_INPUT="/dev/stdin"
-else
-    # stdin 是管道，使用 /dev/tty
-    if [ -e /dev/tty ]; then
-        TTY_INPUT="/dev/tty"
-    else
-        echo "错误: 无法获取终端输入，请直接运行此脚本"
-        echo "用法: bash config-menu.sh"
-        exit 1
+# 需要优先选择“可读”的输入源，避免 /dev/tty 存在但不可用导致循环报错
+resolve_tty_input() {
+    if [ -t 0 ]; then
+        echo "/dev/stdin"
+        return 0
     fi
+
+    if [ -e /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+        echo "/dev/tty"
+        return 0
+    fi
+
+    if [ -r /dev/stdin ]; then
+        echo "/dev/stdin"
+        return 0
+    fi
+
+    return 1
+}
+
+if ! TTY_INPUT="$(resolve_tty_input)"; then
+    echo "错误: 无法获取终端输入，请直接运行此脚本"
+    echo "用法: bash config-menu.sh"
+    exit 1
+fi
+
+if [ "$TTY_INPUT" = "/dev/stdin" ] && [ ! -t 0 ]; then
+    echo "错误: 当前会话不可交互（stdin 非终端，且 /dev/tty 不可用）"
+    echo "请在可交互终端中运行: bash config-menu.sh"
+    exit 1
 fi
 
 # 统一的读取函数（支持非 TTY 模式）
@@ -30,7 +47,11 @@ read_input() {
     local prompt="$1"
     local var_name="$2"
     echo -en "$prompt"
-    read $var_name < "$TTY_INPUT"
+    if ! read $var_name < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，请在可交互终端中重新运行。"
+        exit 1
+    fi
 }
 
 # 从 TTY 读取敏感输入（默认不回显）
@@ -40,10 +61,19 @@ read_secret_input() {
     echo -e "${GRAY}（自动隐藏，直接粘贴后回车即可）${NC}"
     echo -en "$prompt"
     if stty -echo < "$TTY_INPUT" 2>/dev/null; then
-        read $var_name < "$TTY_INPUT"
+        if ! read $var_name < "$TTY_INPUT"; then
+            stty echo < "$TTY_INPUT" 2>/dev/null || true
+            echo ""
+            log_error "输入读取失败，请在可交互终端中重新运行。"
+            exit 1
+        fi
         stty echo < "$TTY_INPUT" 2>/dev/null || true
     else
-        read $var_name < "$TTY_INPUT"
+        if ! read $var_name < "$TTY_INPUT"; then
+            echo ""
+            log_error "输入读取失败，请在可交互终端中重新运行。"
+            exit 1
+        fi
     fi
     echo ""
 }
@@ -99,7 +129,11 @@ AUTO_FIX_OPENCLAW_BIN="$AUTO_FIX_OPENCLAW_DIR/bin/auto-fix-openclaw"
 # ================================ 工具函数 ================================
 
 clear_screen() {
-    clear
+    if [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ] && command -v clear >/dev/null 2>&1; then
+        clear
+    else
+        printf '\n'
+    fi
 }
 
 print_header() {
@@ -140,7 +174,11 @@ log_error() {
 press_enter() {
     echo ""
     echo -en "${GRAY}按 Enter 键继续...${NC}"
-    read < "$TTY_INPUT"
+    if ! read < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，退出配置菜单。"
+        exit 1
+    fi
 }
 
 confirm() {
@@ -154,7 +192,11 @@ confirm() {
     fi
     
     echo -en "${YELLOW}$message $prompt: ${NC}"
-    read response < "$TTY_INPUT"
+    if ! read response < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，退出配置菜单。"
+        exit 1
+    fi
     response=${response:-$default}
     
     case "$response" in
@@ -7156,7 +7198,11 @@ main() {
     while true; do
         show_main_menu
         echo -en "${YELLOW}请选择 [0-9]: ${NC}"
-        read choice < "$TTY_INPUT"
+        if ! read choice < "$TTY_INPUT"; then
+            echo ""
+            log_error "无法读取输入（TTY 不可用），退出配置菜单。"
+            exit 1
+        fi
         
         case $choice in
             1) show_status ;;

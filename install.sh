@@ -19,18 +19,23 @@
 set -e
 
 # ================================ TTY 检测 ================================
-# 当通过 curl | bash 运行时，stdin 是管道，需要从 /dev/tty 读取用户输入
-if [ -t 0 ]; then
-    # stdin 是终端
-    TTY_INPUT="/dev/stdin"
-else
-    # stdin 是管道，使用 /dev/tty
-    if [ -e /dev/tty ]; then
-        TTY_INPUT="/dev/tty"
-    else
-        TTY_INPUT="/dev/null"
+# 当通过 curl | bash 运行时，stdin 是管道，需要优先选择可读输入源
+resolve_tty_input() {
+    if [ -t 0 ]; then
+        echo "/dev/stdin"
+        return 0
     fi
-fi
+    if [ -e /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+        echo "/dev/tty"
+        return 0
+    fi
+    if [ -r /dev/stdin ]; then
+        echo "/dev/stdin"
+        return 0
+    fi
+    echo "/dev/null"
+}
+TTY_INPUT="$(resolve_tty_input)"
 
 # ================================ 颜色定义 ================================
 RED='\033[0;31m'
@@ -2866,7 +2871,7 @@ run_config_menu() {
     
     # 启动配置菜单（使用 /dev/tty 确保交互正常）
     echo ""
-    if [ -e /dev/tty ]; then
+    if [ -e /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
         bash "$menu_script" "${menu_args[@]}" < /dev/tty
     else
         bash "$menu_script" "${menu_args[@]}"
