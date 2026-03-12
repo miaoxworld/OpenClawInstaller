@@ -71,6 +71,7 @@ CONFIG_DIR="$HOME/.openclaw"
 OPENCLAW_ENV="$CONFIG_DIR/env"
 OPENCLAW_JSON="$CONFIG_DIR/openclaw.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
+OPENCLAW_BIN_RESOLVED=""
 
 # 飞书插件策略（仅官方插件，支持版本 pin）
 FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"
@@ -259,9 +260,98 @@ get_env_value() {
 
 # ================================ 测试功能 ================================
 
+ensure_openclaw_on_path() {
+    # 补充常见全局 bin，避免“已安装但当前 shell 不可见”
+    local npm_prefix=""
+    local npm_bin=""
+    local candidate=""
+
+    if command -v npm &> /dev/null; then
+        npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+        if [ -n "$npm_prefix" ] && [ "$npm_prefix" != "undefined" ] && [ "$npm_prefix" != "null" ]; then
+            npm_bin="$npm_prefix/bin"
+            if [ -d "$npm_bin" ]; then
+                case ":$PATH:" in
+                    *":$npm_bin:"*) ;;
+                    *) export PATH="$npm_bin:$PATH" ;;
+                esac
+            fi
+        fi
+    fi
+
+    for candidate in "$HOME/.npm-global/bin" "$HOME/.local/bin" "/usr/local/bin" "/usr/bin"; do
+        if [ -d "$candidate" ]; then
+            case ":$PATH:" in
+                *":$candidate:"*) ;;
+                *) export PATH="$candidate:$PATH" ;;
+            esac
+        fi
+    done
+}
+
+resolve_openclaw_bin() {
+    ensure_openclaw_on_path
+
+    if command -v openclaw &> /dev/null; then
+        if [ "$(type -t openclaw 2>/dev/null)" = "function" ] && [ -n "$OPENCLAW_BIN_RESOLVED" ]; then
+            echo "$OPENCLAW_BIN_RESOLVED"
+            return 0
+        fi
+        command -v openclaw
+        return 0
+    fi
+    if command -v claw &> /dev/null; then
+        command -v claw
+        return 0
+    fi
+
+    if command -v npm &> /dev/null && command -v node &> /dev/null; then
+        local npm_root=""
+        npm_root="$(npm root -g 2>/dev/null || true)"
+        if [ -n "$npm_root" ]; then
+            local pkg_json="$npm_root/openclaw/package.json"
+            if [ -f "$pkg_json" ]; then
+                local candidate
+                candidate=$(node -e '
+const fs=require("fs");
+const path=require("path");
+const pkg=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const bin=(pkg.bin && (pkg.bin.openclaw || pkg.bin.claw)) || "";
+if (bin) process.stdout.write(path.resolve(path.dirname(process.argv[1]), bin));
+' "$pkg_json" 2>/dev/null || true)
+                if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+                    chmod +x "$candidate" 2>/dev/null || true
+                    echo "$candidate"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+ensure_openclaw_alias() {
+    if command -v openclaw &> /dev/null; then
+        return 0
+    fi
+
+    OPENCLAW_BIN_RESOLVED="$(resolve_openclaw_bin || true)"
+    if [ -z "$OPENCLAW_BIN_RESOLVED" ]; then
+        return 1
+    fi
+
+    # 当官方仅暴露 claw 时，动态注入 openclaw 兼容命令
+    openclaw() {
+        "$OPENCLAW_BIN_RESOLVED" "$@"
+    }
+    return 0
+}
+
 # 检查 OpenClaw 是否已安装
 check_openclaw_installed() {
-    command -v openclaw &> /dev/null
+    ensure_openclaw_on_path
+    command -v openclaw &> /dev/null || ensure_openclaw_alias
 }
 
 get_gateway_pid() {
@@ -351,6 +441,43 @@ check_gateway_running() {
     return 1
 }
 
+# 从 openclaw models status --json 读取当前默认模型
+get_current_model_ref() {
+    if ! check_openclaw_installed; then
+        return 1
+    fi
+
+    local model_ref=""
+    if command -v node &> /dev/null; then
+        model_ref=$(openclaw models status --json 2>/dev/null | node -e '
+const fs = require("fs");
+try {
+  const raw = fs.readFileSync(0, "utf8");
+  const data = JSON.parse(raw || "{}");
+  const v = (data.resolvedDefault || data.defaultModel || "").trim();
+  if (v) process.stdout.write(v);
+} catch {}
+' 2>/dev/null || true)
+    elif command -v python3 &> /dev/null; then
+        model_ref=$(openclaw models status --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    v=(d.get("resolvedDefault") or d.get("defaultModel") or "").strip()
+    if v: print(v,end="")
+except Exception:
+    pass
+' 2>/dev/null || true)
+    else
+        model_ref=$(openclaw config get agents.defaults.model.primary 2>/dev/null || true)
+        if [ -z "$model_ref" ] || [ "$model_ref" = "undefined" ]; then
+            model_ref=$(openclaw config get models.default 2>/dev/null || true)
+        fi
+    fi
+
+    [ -n "$model_ref" ] && [ "$model_ref" != "undefined" ] && echo "$model_ref"
+}
+
 # 测试 AI API 连接
 test_ai_connection() {
     local provider=$1
@@ -370,58 +497,67 @@ test_ai_connection() {
     # 确保环境变量已加载
     [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
-    # 显示当前模型配置
+    local target_model_ref=""
+    if [ -n "$provider" ] && [ -n "$model" ]; then
+        target_model_ref="${provider}/${model}"
+    else
+        target_model_ref="$(get_current_model_ref || true)"
+    fi
+
     echo -e "${CYAN}当前模型配置:${NC}"
-    openclaw models status 2>&1 | grep -E "Default|Auth|effective" | head -5
+    openclaw models status 2>&1 | head -12
     echo ""
-    
-    # 使用 openclaw agent --local 测试
-    echo -e "${YELLOW}运行 openclaw agent --local 测试...${NC}"
+
+    if [ -n "$target_model_ref" ]; then
+        echo -e "${CYAN}目标模型:${NC} ${WHITE}${target_model_ref}${NC}"
+    fi
     echo ""
-    
-    local result
-    # 添加 || true 防止命令失败导致函数退出
-    result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
-    local exit_code=$?
-    
-    # 过滤掉 Node.js 警告信息和 JavaScript 错误
-    result=$(echo "$result" | grep -v "ExperimentalWarning" | grep -v "at emitExperimentalWarning" | grep -v "at ModuleLoader" | grep -v "at callTranslator" | grep -v "Cannot read properties of undefined" | grep -v "TypeError:" | grep -v "ReferenceError:")
-    
+
+    echo -e "${YELLOW}运行官方模型探针 (openclaw models status --probe --check)...${NC}"
+    local probe_output=""
+    local probe_exit=0
+    if [ -n "$provider" ]; then
+        probe_output=$(openclaw models status --probe --check --probe-provider "$provider" --json 2>&1)
+        probe_exit=$?
+    else
+        probe_output=$(openclaw models status --probe --check --json 2>&1)
+        probe_exit=$?
+    fi
+
+    if [ $probe_exit -eq 0 ]; then
+        log_info "OpenClaw AI 探针通过，模型认证链路正常。"
+        return 0
+    fi
+
+    log_warn "模型探针未通过，尝试一次本地 agent 调用获取详细报错..."
+    local result=""
+    local exit_code=1
+    if [ -n "$target_model_ref" ]; then
+        result=$(openclaw agent --local --model "$target_model_ref" --message "只回复 OK" 2>&1)
+        exit_code=$?
+    else
+        result=$(openclaw agent --local --message "只回复 OK" 2>&1)
+        exit_code=$?
+    fi
+
     echo ""
     if [ $exit_code -eq 0 ] && ! echo "$result" | grep -qiE "error|failed|401|403|Unknown model"; then
         log_info "OpenClaw AI 测试成功！"
-        echo ""
-        # 显示 AI 响应（过滤掉空行和无关内容）
-        local ai_response=$(echo "$result" | grep -v "^$" | grep -v "^\[" | grep -v "^{" | head -5)
-        if [ -n "$ai_response" ]; then
-            echo -e "  ${CYAN}AI 响应:${NC}"
-            echo "$ai_response" | sed 's/^/    /'
-        else
-            echo -e "  ${GREEN}✓ API 连接正常${NC}"
-        fi
         return 0
-    else
-        log_error "OpenClaw AI 测试失败"
-        echo ""
-        echo -e "  ${RED}错误信息:${NC}"
-        echo "$result" | head -5 | sed 's/^/    /'
-        echo ""
-        
-        # 提供修复建议
-        if echo "$result" | grep -q "Unknown model"; then
-            echo -e "${YELLOW}提示: 模型不被 OpenClaw 识别${NC}"
-            echo "  运行: openclaw configure --section model"
-        elif echo "$result" | grep -q "401\|Incorrect API key"; then
-            echo -e "${YELLOW}提示: API Key 无效或 Base URL 配置不正确${NC}"
-            echo "  OpenClaw 可能不支持自定义 API 地址"
-            echo "  运行: openclaw configure --section model"
-        fi
-        echo ""
-        echo "  其他诊断命令:"
-        echo "    openclaw doctor"
-        echo "    openclaw models status"
-        return 1
     fi
+
+    log_error "OpenClaw AI 测试失败"
+    echo ""
+    echo -e "  ${RED}探针输出:${NC}"
+    echo "$probe_output" | head -10 | sed 's/^/    /'
+    echo ""
+    echo -e "  ${RED}调用输出:${NC}"
+    echo "$result" | head -10 | sed 's/^/    /'
+    echo ""
+    echo "  诊断命令:"
+    echo "    openclaw doctor"
+    echo "    openclaw models status --probe --check --json"
+    return 1
 }
 
 # 测试 Telegram 机器人
@@ -914,7 +1050,7 @@ show_status() {
     echo ""
     
     # OpenClaw 服务状态
-    if command -v openclaw &> /dev/null; then
+    if check_openclaw_installed; then
         echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
         
         # 使用端口检测判断服务运行状态（更可靠）
@@ -938,7 +1074,9 @@ show_status() {
         
         # 显示 OpenClaw 模型配置
         if check_openclaw_installed; then
-            local default_model=$(openclaw config get models.default 2>/dev/null || echo "未配置")
+            local default_model
+            default_model="$(get_current_model_ref || true)"
+            [ -z "$default_model" ] && default_model="未配置"
             echo -e "    • 默认模型: ${WHITE}$default_model${NC}"
         fi
         
@@ -1117,10 +1255,10 @@ config_anthropic() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "Claude Sonnet 4.5 (推荐)" "⭐"
-    print_menu_item "2" "Claude Opus 4.5 (最强)" "👑"
+    print_menu_item "1" "Claude Sonnet 4.6 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "Claude Opus 4.6 (最强)" "👑"
     print_menu_item "3" "Claude 4.5 Haiku (快速)" "⚡"
-    print_menu_item "4" "Claude 4 Sonnet (上一代)" "📦"
+    print_menu_item "4" "Claude Sonnet 4.5 (兼容)" "📦"
     print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
@@ -1128,12 +1266,12 @@ config_anthropic() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="claude-sonnet-4-5-20250929" ;;
-        2) model="claude-opus-4-5-20251101" ;;
-        3) model="claude-haiku-4-5-20251001" ;;
-        4) model="claude-sonnet-4-20250514" ;;
+        1) model="claude-sonnet-4-6" ;;
+        2) model="claude-opus-4-6" ;;
+        3) model="claude-haiku-4-5" ;;
+        4) model="claude-sonnet-4-5" ;;
         5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="claude-sonnet-4-5-20250929" ;;
+        *) model="claude-sonnet-4-6" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -1233,11 +1371,11 @@ config_openai() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "GPT-5 (推荐)" "⭐"
-    print_menu_item "2" "GPT-5-mini (经济)" "⚡"
-    print_menu_item "3" "GPT-4o" "🚀"
-    print_menu_item "4" "GPT-4o-mini" "💰"
-    print_menu_item "5" "o1-preview (推理)" "🧠"
+    print_menu_item "1" "GPT-5.1-Codex (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "GPT-5.4 (最新通用)" "🚀"
+    print_menu_item "3" "GPT-5.1" "⚡"
+    print_menu_item "4" "GPT-5.1-Codex-Mini (经济)" "💰"
+    print_menu_item "5" "GPT-4.1 (兼容)" "🧠"
     print_menu_item "6" "自定义模型名称" "✏️"
     echo ""
     
@@ -1245,13 +1383,13 @@ config_openai() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gpt-5" ;;
-        2) model="gpt-5-mini" ;;
-        3) model="gpt-4o" ;;
-        4) model="gpt-4o-mini" ;;
-        5) model="o1-preview" ;;
+        1) model="gpt-5.1-codex" ;;
+        2) model="gpt-5.4" ;;
+        3) model="gpt-5.1" ;;
+        4) model="gpt-5.1-codex-mini" ;;
+        5) model="gpt-4.1" ;;
         6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gpt-5" ;;
+        *) model="gpt-5.1-codex" ;;
     esac
     
     # 如果使用自定义 API 地址，询问 API 类型
@@ -1417,7 +1555,7 @@ config_kimi() {
     # 获取当前配置
     local current_key=$(get_env_value "MOONSHOT_API_KEY")
     local current_url=$(get_env_value "MOONSHOT_BASE_URL")
-    local official_url="https://api.moonshot.cn/v1"
+    local official_url="https://api.moonshot.ai/v1"
     
     # 显示当前配置
     echo -e "${CYAN}Kimi 是月之暗面（Moonshot AI）推出的大语言模型${NC}"
@@ -1436,7 +1574,8 @@ config_kimi() {
     fi
     echo ""
     
-    echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
+    echo -e "${CYAN}官方 API: ${WHITE}https://api.moonshot.ai/v1${NC}"
+    echo -e "${CYAN}国内 API: ${WHITE}https://api.moonshot.cn/v1${NC}"
     echo -e "${GRAY}获取 Key: https://platform.moonshot.cn/${NC}"
     echo ""
     print_divider
@@ -1456,8 +1595,17 @@ config_kimi() {
     if [ "$config_mode" = "2" ]; then
         echo ""
         echo -e "${CYAN}API 地址配置:${NC}"
+        print_menu_item "1" "国际版 API (api.moonshot.ai)" "🌍"
+        print_menu_item "2" "国内版 API (api.moonshot.cn)" "🇨🇳"
+        read -p "$(echo -e "${YELLOW}区域选择 [1-2] (默认: 1): ${NC}")" moonshot_region < "$TTY_INPUT"
+        if [ "${moonshot_region:-1}" = "2" ]; then
+            base_url="https://api.moonshot.cn/v1"
+        else
+            base_url="https://api.moonshot.ai/v1"
+        fi
+        echo ""
         [ -n "$current_url" ] && echo -e "  当前地址: ${WHITE}$current_url${NC}"
-        echo -e "  官方地址: ${WHITE}$official_url${NC}"
+        echo -e "  建议地址: ${WHITE}$base_url${NC}"
         echo ""
         read -p "$(echo -e "${YELLOW}输入 API 地址 (留空保持当前配置): ${NC}")" input_url < "$TTY_INPUT"
         
@@ -1488,27 +1636,21 @@ config_kimi() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "moonshot-v1-auto (自动, 推荐)" "⭐"
-    print_menu_item "2" "moonshot-v1-8k" "📄"
-    print_menu_item "3" "moonshot-v1-32k" "📑"
-    print_menu_item "4" "moonshot-v1-128k (长文本)" "📚"
-    print_menu_item "5" "自定义模型名称" "✏️"
+    print_menu_item "1" "kimi-k2.5 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-2] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="moonshot-v1-auto" ;;
-        2) model="moonshot-v1-8k" ;;
-        3) model="moonshot-v1-32k" ;;
-        4) model="moonshot-v1-128k" ;;
-        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="moonshot-v1-auto" ;;
+        1) model="kimi-k2.5" ;;
+        2) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="kimi-k2.5" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
-    save_openclaw_ai_config "kimi" "$api_key" "$model" "$base_url"
+    save_openclaw_ai_config "moonshot" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Kimi (Moonshot) 配置完成！"
@@ -1518,7 +1660,7 @@ config_kimi() {
     # 询问是否测试
     echo ""
     if confirm "是否测试 API 连接？" "y"; then
-        test_ai_connection "kimi" "$api_key" "$model" "$base_url"
+        test_ai_connection "moonshot" "$api_key" "$model" "$base_url"
     fi
     
     press_enter
@@ -1623,9 +1765,9 @@ config_openrouter() {
     print_divider
     echo ""
     
-    # 获取当前配置 (OpenRouter 使用 OPENAI 环境变量)
-    local current_key=$(get_env_value "OPENAI_API_KEY")
-    local current_url=$(get_env_value "OPENAI_BASE_URL")
+    # 获取当前配置
+    local current_key=$(get_env_value "OPENROUTER_API_KEY")
+    local current_url=$(get_env_value "OPENROUTER_BASE_URL")
     local official_url="https://openrouter.ai/api/v1"
     
     # 显示当前配置
@@ -1697,10 +1839,10 @@ config_openrouter() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "anthropic/claude-sonnet-4-5 (推荐)" "🟣"
-    print_menu_item "2" "openai/gpt-5-mini" "🟢"
-    print_menu_item "3" "google/gemini-2.5-pro" "🔴"
-    print_menu_item "4" "meta-llama/llama-3.3-70b-instruct" "🦙"
+    print_menu_item "1" "auto (推荐, 官方默认)" "🧭"
+    print_menu_item "2" "anthropic/claude-opus-4.6" "🟣"
+    print_menu_item "3" "openai/gpt-5.1-codex" "🟢"
+    print_menu_item "4" "google/gemini-3.1-pro-preview" "🔴"
     print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
@@ -1708,12 +1850,12 @@ config_openrouter() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="anthropic/claude-sonnet-4-5" ;;
-        2) model="openai/gpt-5-mini" ;;
-        3) model="google/gemini-2.5-pro" ;;
-        4) model="meta-llama/llama-3.3-70b-instruct" ;;
+        1) model="auto" ;;
+        2) model="anthropic/claude-opus-4.6" ;;
+        3) model="openai/gpt-5.1-codex" ;;
+        4) model="google/gemini-3.1-pro-preview" ;;
         5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="anthropic/claude-sonnet-4-5" ;;
+        *) model="auto" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -1762,7 +1904,7 @@ config_google_gemini() {
     echo ""
     
     echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
-    echo -e "${GRAY}获取 Key: https://makersuite.google.com/app/apikey${NC}"
+    echo -e "${GRAY}获取 Key: https://aistudio.google.com/apikey${NC}"
     echo ""
     print_divider
     echo ""
@@ -1813,21 +1955,23 @@ config_google_gemini() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "gemini-2.5-pro (推荐)" "⭐"
-    print_menu_item "2" "gemini-2.5-flash" "🚀"
-    print_menu_item "3" "gemini-2.0-flash" "⚡"
-    print_menu_item "4" "自定义模型名称" "✏️"
+    print_menu_item "1" "gemini-3.1-pro-preview (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "gemini-3-flash-preview" "🚀"
+    print_menu_item "3" "gemini-2.5-pro" "📦"
+    print_menu_item "4" "gemini-2.5-flash" "⚡"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gemini-2.5-pro" ;;
-        2) model="gemini-2.5-flash" ;;
-        3) model="gemini-2.0-flash" ;;
-        4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gemini-2.5-pro" ;;
+        1) model="gemini-3.1-pro-preview" ;;
+        2) model="gemini-3-flash-preview" ;;
+        3) model="gemini-2.5-pro" ;;
+        4) model="gemini-2.5-flash" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="gemini-3.1-pro-preview" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2176,25 +2320,19 @@ config_xai() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "grok-4-fast (推荐，最新)" "⭐"
-    print_menu_item "2" "grok-4 (最强)" "👑"
-    print_menu_item "3" "grok-3-fast (快速)" "⚡"
-    print_menu_item "4" "grok-3-mini-fast (轻量)" "🪶"
-    print_menu_item "5" "grok-2-vision (视觉)" "👁️"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "1" "grok-4 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "grok-4-fast" "⚡"
+    print_menu_item "3" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-3] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="grok-4-fast" ;;
-        2) model="grok-4" ;;
-        3) model="grok-3-fast-latest" ;;
-        4) model="grok-3-mini-fast-latest" ;;
-        5) model="grok-2-vision-latest" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="grok-4-fast" ;;
+        1) model="grok-4" ;;
+        2) model="grok-4-fast" ;;
+        3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="grok-4" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2279,22 +2417,20 @@ config_zai() {
     echo ""
     print_menu_item "1" "glm-5 (推荐，最新)" "⭐"
     print_menu_item "2" "glm-4.7" "📦"
-    print_menu_item "3" "glm-4.6v (视觉)" "👁️"
-    print_menu_item "4" "glm-4.5-flash (快速)" "⚡"
-    print_menu_item "5" "glm-4.5-air (轻量)" "🪶"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "3" "glm-4.7-flash" "⚡"
+    print_menu_item "4" "glm-4.7-flashx" "🔥"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
         1) model="glm-5" ;;
         2) model="glm-4.7" ;;
-        3) model="glm-4.6v" ;;
-        4) model="glm-4.5-flash" ;;
-        5) model="glm-4.5-air" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        3) model="glm-4.7-flash" ;;
+        4) model="glm-4.7-flashx" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
         *) model="glm-5" ;;
     esac
     
@@ -2392,8 +2528,8 @@ config_minimax() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "minimax-m2.5 (推荐，最新)" "⭐"
-    print_menu_item "2" "minimax-m2.1 (稳定)" "📦"
+    print_menu_item "1" "MiniMax-M2.5 (推荐，官方)" "⭐"
+    print_menu_item "2" "MiniMax-M2.5-highspeed (高速)" "⚡"
     print_menu_item "3" "自定义模型名称" "✏️"
     echo ""
     
@@ -2401,10 +2537,10 @@ config_minimax() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="minimax-m2.5" ;;
-        2) model="minimax-m2.1" ;;
+        1) model="MiniMax-M2.5" ;;
+        2) model="MiniMax-M2.5-highspeed" ;;
         3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="minimax-m2.5" ;;
+        *) model="MiniMax-M2.5" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2434,7 +2570,7 @@ config_opencode() {
     
     # 获取当前配置
     local current_key=$(get_env_value "OPENCODE_API_KEY")
-    local official_url="https://api.opencode.ai/v1"
+    local official_url="https://opencode.ai/zen/v1"
     
     # 显示当前配置
     echo -e "${CYAN}OpenCode 是一个免费的多模型 API 网关${NC}"
@@ -2451,7 +2587,7 @@ config_opencode() {
     echo ""
     
     echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
-    echo -e "${GRAY}获取 Key: https://opencode.ai/${NC}"
+    echo -e "${GRAY}获取 Key: https://opencode.ai/auth${NC}"
     echo ""
     print_divider
     echo ""
@@ -2488,42 +2624,71 @@ config_opencode() {
     fi
     
     echo ""
+    echo -e "${CYAN}选择目录:${NC}"
+    print_menu_item "1" "Zen 目录 (Claude/GPT/Gemini)" "🧘"
+    print_menu_item "2" "Go 目录 (Kimi/GLM/MiniMax)" "🏃"
+    echo ""
+    read -p "$(echo -e "${YELLOW}请选择 [1-2] (默认: 1): ${NC}")" catalog_choice < "$TTY_INPUT"
+    catalog_choice=${catalog_choice:-1}
+
+    local provider="opencode"
+    if [ "$catalog_choice" = "2" ]; then
+        provider="opencode-go"
+    fi
+
+    echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "claude-sonnet-4-5 (推荐)" "⭐"
-    print_menu_item "2" "claude-opus-4-5 (最强)" "👑"
-    print_menu_item "3" "gpt-5 (GPT-5)" "🟢"
-    print_menu_item "4" "gemini-3-pro (Gemini 3)" "🔴"
-    print_menu_item "5" "glm-4.7-free (免费)" "🆓"
-    print_menu_item "6" "gpt-5-codex (代码)" "💻"
-    print_menu_item "7" "自定义模型名称" "✏️"
-    echo ""
-    
-    read -p "$(echo -e "${YELLOW}请选择 [1-7] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
-    model_choice=${model_choice:-1}
-    
-    case $model_choice in
-        1) model="claude-sonnet-4-5" ;;
-        2) model="claude-opus-4-5" ;;
-        3) model="gpt-5" ;;
-        4) model="gemini-3-pro" ;;
-        5) model="glm-4.7-free" ;;
-        6) model="gpt-5-codex" ;;
-        7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="claude-sonnet-4-5" ;;
-    esac
+    if [ "$provider" = "opencode-go" ]; then
+        print_menu_item "1" "kimi-k2.5 (推荐, Go 默认)" "⭐"
+        print_menu_item "2" "glm-5" "🇨🇳"
+        print_menu_item "3" "minimax-m2.5" "🤖"
+        print_menu_item "4" "自定义模型名称" "✏️"
+        echo ""
+        read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+        model_choice=${model_choice:-1}
+        case $model_choice in
+            1) model="kimi-k2.5" ;;
+            2) model="glm-5" ;;
+            3) model="minimax-m2.5" ;;
+            4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+            *) model="kimi-k2.5" ;;
+        esac
+    else
+        print_menu_item "1" "claude-opus-4-6 (推荐, Zen 默认)" "⭐"
+        print_menu_item "2" "gpt-5.1-codex" "💻"
+        print_menu_item "3" "gpt-5.2" "🟢"
+        print_menu_item "4" "gemini-3-pro (Gemini 3)" "🔴"
+        print_menu_item "5" "glm-4.7 (免费)" "🆓"
+        print_menu_item "6" "gpt-5.1-codex-mini" "⚡"
+        print_menu_item "7" "自定义模型名称" "✏️"
+        echo ""
+        read -p "$(echo -e "${YELLOW}请选择 [1-7] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+        model_choice=${model_choice:-1}
+        case $model_choice in
+            1) model="claude-opus-4-6" ;;
+            2) model="gpt-5.1-codex" ;;
+            3) model="gpt-5.2" ;;
+            4) model="gemini-3-pro" ;;
+            5) model="glm-4.7" ;;
+            6) model="gpt-5.1-codex-mini" ;;
+            7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+            *) model="claude-opus-4-6" ;;
+        esac
+    fi
     
     # 保存到 OpenClaw 环境变量配置
-    save_openclaw_ai_config "opencode" "$api_key" "$model" ""
+    save_openclaw_ai_config "$provider" "$api_key" "$model" ""
     
     echo ""
     log_info "OpenCode 配置完成！"
+    log_info "目录: $provider"
     log_info "模型: $model"
     
     # 询问是否测试
     echo ""
     if confirm "是否测试 API 连接？" "y"; then
-        test_ai_connection "opencode" "$api_key" "$model" ""
+        test_ai_connection "$provider" "$api_key" "$model" ""
     fi
     
     press_enter
@@ -2594,25 +2759,23 @@ config_google_gemini_cli() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "gemini-3-pro-preview (推荐)" "⭐"
+    print_menu_item "1" "gemini-3.1-pro-preview (推荐)" "⭐"
     print_menu_item "2" "gemini-3-flash-preview (快速)" "⚡"
-    print_menu_item "3" "gemini-2.5-pro (稳定)" "📦"
-    print_menu_item "4" "gemini-2.5-flash (快速稳定)" "🚀"
-    print_menu_item "5" "gemini-2.0-flash" "⚡"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "3" "gemini-3.1-flash-lite-preview (轻量)" "🚀"
+    print_menu_item "4" "gemini-2.5-pro (稳定)" "📦"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gemini-3-pro-preview" ;;
+        1) model="gemini-3.1-pro-preview" ;;
         2) model="gemini-3-flash-preview" ;;
-        3) model="gemini-2.5-pro" ;;
-        4) model="gemini-2.5-flash" ;;
-        5) model="gemini-2.0-flash" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gemini-3-pro-preview" ;;
+        3) model="gemini-3.1-flash-lite-preview" ;;
+        4) model="gemini-2.5-pro" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="gemini-3.1-pro-preview" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2698,8 +2861,8 @@ config_google_antigravity() {
     print_menu_item "1" "gemini-3-pro-high (推荐)" "⭐"
     print_menu_item "2" "gemini-3-pro-low (快速)" "⚡"
     print_menu_item "3" "gemini-3-flash (闪电)" "🔥"
-    print_menu_item "4" "claude-sonnet-4-5 (Claude)" "🟣"
-    print_menu_item "5" "claude-opus-4-5-thinking (思考)" "🧠"
+    print_menu_item "4" "claude-opus-4-6-thinking (Claude)" "🟣"
+    print_menu_item "5" "claude-sonnet-4-6-thinking (思考)" "🧠"
     print_menu_item "6" "gpt-oss-120b-medium (GPT)" "🟢"
     print_menu_item "7" "自定义模型名称" "✏️"
     echo ""
@@ -2711,8 +2874,8 @@ config_google_antigravity() {
         1) model="gemini-3-pro-high" ;;
         2) model="gemini-3-pro-low" ;;
         3) model="gemini-3-flash" ;;
-        4) model="claude-sonnet-4-5" ;;
-        5) model="claude-opus-4-5-thinking" ;;
+        4) model="claude-opus-4-6-thinking" ;;
+        5) model="claude-sonnet-4-6-thinking" ;;
         6) model="gpt-oss-120b-medium" ;;
         7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
         *) model="gemini-3-pro-high" ;;
@@ -3900,7 +4063,7 @@ manage_service() {
     case $choice in
         1)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 # 先检查服务是否已经在运行（使用端口检测，更可靠）
                 local port=18789
                 local running_pid
@@ -4074,7 +4237,7 @@ manage_service() {
         2)
             echo ""
             log_info "正在停止服务..."
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw gateway stop 2>/dev/null || true
                 sleep 1
                 # 使用端口检测判断服务是否已停止（更可靠）
@@ -4093,7 +4256,7 @@ manage_service() {
         3)
             echo ""
             log_info "正在重启服务..."
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 # 确保配置正确
                 ensure_openclaw_init
                 
@@ -4165,7 +4328,7 @@ manage_service() {
             ;;
         4)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw status
             else
                 log_error "OpenClaw 未安装"
@@ -4173,7 +4336,7 @@ manage_service() {
             ;;
         5)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 echo -e "${CYAN}按 Ctrl+C 退出日志查看${NC}"
                 sleep 1
                 openclaw logs --follow
@@ -4183,7 +4346,7 @@ manage_service() {
             ;;
         6)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw doctor --fix
             else
                 log_error "OpenClaw 未安装"
@@ -4191,7 +4354,7 @@ manage_service() {
             ;;
         7)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 log_info "正在安装系统服务..."
                 openclaw gateway install
                 log_info "系统服务已安装"
@@ -4227,7 +4390,7 @@ manage_service() {
             
             # 1. 停止服务
             log_info "正在停止服务..."
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw gateway stop 2>/dev/null || true
                 sleep 1
             fi
@@ -4261,7 +4424,7 @@ manage_service() {
             log_info "正在卸载 openclaw..."
             npm uninstall -g openclaw 2>&1 | grep -v "^npm" | head -5 || true
             
-            if ! command -v openclaw &> /dev/null; then
+            if ! check_openclaw_installed; then
                 log_info "OpenClaw 已卸载"
             else
                 log_warn "卸载可能未完全成功，请手动运行: npm uninstall -g openclaw"
@@ -4344,6 +4507,109 @@ ensure_openclaw_init() {
     fi
 }
 
+# 为 MiniMax 写入官方兼容 provider 配置，避免旧版本出现 Unknown model
+ensure_minimax_provider_config() {
+    local provider="$1"   # minimax|minimax-cn
+    local model="$2"      # MiniMax-M2.5 / MiniMax-M2.5-highspeed
+    local config_file="$3"
+    local base_url="https://api.minimax.io/anthropic"
+    if [ "$provider" = "minimax-cn" ]; then
+        base_url="https://api.minimaxi.com/anthropic"
+    fi
+
+    mkdir -p "$(dirname "$config_file")" 2>/dev/null || true
+    [ -f "$config_file" ] || echo "{}" > "$config_file"
+
+    if command -v node &> /dev/null; then
+        node -e "
+const fs = require('fs');
+const file = '$config_file';
+const provider = '$provider';
+const model = '$model';
+const baseUrl = '$base_url';
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+cfg.models ||= {};
+cfg.models.mode ||= 'merge';
+cfg.models.providers ||= {};
+const p = cfg.models.providers[provider] || {};
+const models = Array.isArray(p.models) ? p.models : [];
+const catalog = {
+  'MiniMax-M2.5': { name: 'MiniMax M2.5' },
+  'MiniMax-M2.5-highspeed': { name: 'MiniMax M2.5 Highspeed' },
+};
+const modelIds = new Set(models.map(m => m.id));
+for (const id of ['MiniMax-M2.5', 'MiniMax-M2.5-highspeed']) {
+  if (!modelIds.has(id)) {
+    models.push({
+      id,
+      name: (catalog[id] && catalog[id].name) || id,
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0.12 },
+      contextWindow: 200000,
+      maxTokens: 8192
+    });
+  }
+}
+cfg.models.providers[provider] = {
+  ...p,
+  baseUrl,
+  api: 'anthropic-messages',
+  authHeader: true,
+  models
+};
+cfg.agents ||= {};
+cfg.agents.defaults ||= {};
+cfg.agents.defaults.models ||= {};
+const ref = provider + '/' + model;
+cfg.agents.defaults.models[ref] = { ...(cfg.agents.defaults.models[ref] || {}), alias: 'Minimax' };
+fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+" >/dev/null 2>&1 || true
+    elif command -v python3 &> /dev/null; then
+        python3 - <<PYEOF
+import json, os
+file = os.path.expanduser("$config_file")
+provider = "$provider"
+model = "$model"
+base_url = "$base_url"
+try:
+    with open(file, "r") as f:
+        cfg = json.load(f)
+except Exception:
+    cfg = {}
+cfg.setdefault("models", {})
+cfg["models"].setdefault("mode", "merge")
+cfg["models"].setdefault("providers", {})
+p = cfg["models"]["providers"].get(provider, {})
+models = p.get("models", []) if isinstance(p.get("models"), list) else []
+catalog = {
+    "MiniMax-M2.5": "MiniMax M2.5",
+    "MiniMax-M2.5-highspeed": "MiniMax M2.5 Highspeed",
+}
+existing = {m.get("id") for m in models if isinstance(m, dict)}
+for mid in ("MiniMax-M2.5", "MiniMax-M2.5-highspeed"):
+    if mid not in existing:
+        models.append({
+            "id": mid, "name": catalog.get(mid, mid), "reasoning": True, "input": ["text"],
+            "cost": {"input": 0.3, "output": 1.2, "cacheRead": 0.03, "cacheWrite": 0.12},
+            "contextWindow": 200000, "maxTokens": 8192
+        })
+cfg["models"]["providers"][provider] = {
+    **(p if isinstance(p, dict) else {}),
+    "baseUrl": base_url,
+    "api": "anthropic-messages",
+    "authHeader": True,
+    "models": models
+}
+cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})
+cfg["agents"]["defaults"]["models"][f"{provider}/{model}"] = {"alias": "Minimax"}
+with open(file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+    fi
+}
+
 # 保存 AI 配置到 OpenClaw 环境变量
 # 参数: provider api_key model base_url [api_type]
 save_openclaw_ai_config() {
@@ -4378,25 +4644,25 @@ EOF
             echo "export DEEPSEEK_API_KEY=$api_key" >> "$env_file"
             echo "export DEEPSEEK_BASE_URL=${base_url:-https://api.deepseek.com}" >> "$env_file"
             ;;
-        kimi)
+        moonshot|kimi)
             echo "export MOONSHOT_API_KEY=$api_key" >> "$env_file"
-            echo "export MOONSHOT_BASE_URL=${base_url:-https://api.moonshot.cn/v1}" >> "$env_file"
+            echo "export MOONSHOT_BASE_URL=${base_url:-https://api.moonshot.ai/v1}" >> "$env_file"
             ;;
         google|google-gemini-cli|google-antigravity)
             echo "export GOOGLE_API_KEY=$api_key" >> "$env_file"
             [ -n "$base_url" ] && echo "export GOOGLE_BASE_URL=$base_url" >> "$env_file"
             ;;
         groq)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://api.groq.com/openai/v1}" >> "$env_file"
+            echo "export GROQ_API_KEY=$api_key" >> "$env_file"
+            echo "export GROQ_BASE_URL=${base_url:-https://api.groq.com/openai/v1}" >> "$env_file"
             ;;
         mistral)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://api.mistral.ai/v1}" >> "$env_file"
+            echo "export MISTRAL_API_KEY=$api_key" >> "$env_file"
+            echo "export MISTRAL_BASE_URL=${base_url:-https://api.mistral.ai/v1}" >> "$env_file"
             ;;
         openrouter)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://openrouter.ai/api/v1}" >> "$env_file"
+            echo "export OPENROUTER_API_KEY=$api_key" >> "$env_file"
+            echo "export OPENROUTER_BASE_URL=${base_url:-https://openrouter.ai/api/v1}" >> "$env_file"
             ;;
         ollama)
             echo "export OLLAMA_HOST=${base_url:-http://localhost:11434}" >> "$env_file"
@@ -4410,12 +4676,16 @@ EOF
         minimax|minimax-cn)
             echo "export MINIMAX_API_KEY=$api_key" >> "$env_file"
             ;;
-        opencode)
+        opencode|opencode-go)
             echo "export OPENCODE_API_KEY=$api_key" >> "$env_file"
             ;;
     esac
     
     chmod 600 "$env_file"
+
+    if [ "$provider" = "minimax" ] || [ "$provider" = "minimax-cn" ]; then
+        ensure_minimax_provider_config "$provider" "$model" "$config_file"
+    fi
     
     # 设置默认模型
     if check_openclaw_installed; then
@@ -4437,14 +4707,20 @@ EOF
                 anthropic)
                     openclaw_model="anthropic/$model"
                     ;;
-                openai|groq|mistral)
+                openai)
                     openclaw_model="openai/$model"
+                    ;;
+                groq)
+                    openclaw_model="groq/$model"
+                    ;;
+                mistral)
+                    openclaw_model="mistral/$model"
                     ;;
                 deepseek)
                     openclaw_model="deepseek/$model"
                     ;;
-                kimi)
-                    openclaw_model="kimi/$model"
+                moonshot|kimi)
+                    openclaw_model="moonshot/$model"
                     ;;
                 openrouter)
                     openclaw_model="openrouter/$model"
@@ -4470,6 +4746,9 @@ EOF
                 opencode)
                     openclaw_model="opencode/$model"
                     ;;
+                opencode-go)
+                    openclaw_model="opencode-go/$model"
+                    ;;
                 google-gemini-cli)
                     openclaw_model="google-gemini-cli/$model"
                     ;;
@@ -4482,8 +4761,15 @@ EOF
         if [ -n "$openclaw_model" ]; then
             # 加载环境变量并设置模型
             source "$env_file"
-            openclaw models set "$openclaw_model" 2>/dev/null || true
-            log_info "OpenClaw 默认模型已设置为: $openclaw_model"
+            local set_output=""
+            if set_output=$(openclaw models set "$openclaw_model" 2>&1); then
+                log_info "OpenClaw 默认模型已设置为: $openclaw_model"
+            else
+                log_warn "openclaw models set 失败，回退到配置写入"
+                echo "$set_output" | head -3 | sed 's/^/  /'
+                openclaw config set agents.defaults.model.primary "$openclaw_model" 2>/dev/null || true
+                openclaw config set models.default "$openclaw_model" 2>/dev/null || true
+            fi
         fi
     fi
     
@@ -5212,7 +5498,7 @@ advanced_settings() {
             ;;
         5)
             if confirm "确定要清理日志吗？" "n"; then
-                if command -v openclaw &> /dev/null; then
+                if check_openclaw_installed; then
                     openclaw logs clear 2>/dev/null || log_warn "OpenClaw 日志清理命令不可用"
                 fi
                 rm -f /tmp/openclaw-gateway.log 2>/dev/null
@@ -5400,60 +5686,50 @@ quick_test_ai() {
     echo -e "${WHITE}🤖 测试 AI API 连接${NC}"
     print_divider
     echo ""
-    
-    # 从环境变量文件读取配置
-    if [ ! -f "$OPENCLAW_ENV" ]; then
-        log_error "AI 模型尚未配置，请先完成配置"
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         quick_test_menu
         return
     fi
     
-    source "$OPENCLAW_ENV"
+    # 读取环境变量（如果存在）
+    [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
     local provider=""
     local api_key=""
     local base_url=""
     local model=""
     
-    # 确定 provider
-    if [ -n "$ANTHROPIC_API_KEY" ]; then
-        provider="anthropic"
-        api_key="$ANTHROPIC_API_KEY"
-        base_url="$ANTHROPIC_BASE_URL"
-    elif [ -n "$OPENAI_API_KEY" ]; then
-        provider="openai"
-        api_key="$OPENAI_API_KEY"
-        base_url="$OPENAI_BASE_URL"
-    elif [ -n "$GOOGLE_API_KEY" ]; then
-        provider="google"
-        api_key="$GOOGLE_API_KEY"
-        base_url="$GOOGLE_BASE_URL"
-    elif [ -n "$GROQ_API_KEY" ]; then
-        provider="groq"
-        api_key="$GROQ_API_KEY"
-        base_url="$GROQ_BASE_URL"
-    elif [ -n "$MISTRAL_API_KEY" ]; then
-        provider="mistral"
-        api_key="$MISTRAL_API_KEY"
-        base_url="$MISTRAL_BASE_URL"
-    elif [ -n "$OPENROUTER_API_KEY" ]; then
-        provider="openrouter"
-        api_key="$OPENROUTER_API_KEY"
-        base_url="$OPENROUTER_BASE_URL"
-    fi
-    
-    if [ -z "$provider" ] || [ -z "$api_key" ]; then
-        log_error "AI 模型尚未配置，请先完成配置"
+    local model_ref=""
+    model_ref="$(get_current_model_ref || true)"
+    if [ -z "$model_ref" ]; then
+        log_error "未检测到已生效默认模型，请先完成模型配置"
         press_enter
         quick_test_menu
         return
     fi
-    
-    # 获取当前模型
-    if check_openclaw_installed; then
-        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
-    fi
+
+    provider="${model_ref%%/*}"
+    model="${model_ref#*/}"
+
+    # 按 provider 尝试读取对应 key（若为空也允许，因为可能使用 auth profile）
+    case "$provider" in
+        anthropic) api_key="$ANTHROPIC_API_KEY"; base_url="$ANTHROPIC_BASE_URL" ;;
+        openai) api_key="$OPENAI_API_KEY"; base_url="$OPENAI_BASE_URL" ;;
+        deepseek) api_key="$DEEPSEEK_API_KEY"; base_url="$DEEPSEEK_BASE_URL" ;;
+        moonshot|kimi) api_key="$MOONSHOT_API_KEY"; base_url="$MOONSHOT_BASE_URL" ;;
+        google|google-gemini-cli|google-antigravity) api_key="$GOOGLE_API_KEY"; base_url="$GOOGLE_BASE_URL" ;;
+        openrouter) api_key="$OPENROUTER_API_KEY"; base_url="$OPENROUTER_BASE_URL" ;;
+        groq) api_key="$GROQ_API_KEY"; base_url="$GROQ_BASE_URL" ;;
+        mistral) api_key="$MISTRAL_API_KEY"; base_url="$MISTRAL_BASE_URL" ;;
+        xai) api_key="$XAI_API_KEY" ;;
+        zai) api_key="$ZAI_API_KEY" ;;
+        minimax|minimax-cn|minimax-portal) api_key="$MINIMAX_API_KEY" ;;
+        opencode|opencode-zen|opencode-go) api_key="$OPENCODE_API_KEY" ;;
+        ollama|lmstudio) api_key="local-runtime" ;;
+    esac
     
     echo -e "当前配置:"
     echo -e "  提供商: ${WHITE}$provider${NC}"
@@ -5710,58 +5986,43 @@ run_all_tests() {
     local api_key=""
     local base_url=""
     local model=""
-    
-    if [ -n "$ANTHROPIC_API_KEY" ]; then
-        provider="anthropic"
-        api_key="$ANTHROPIC_API_KEY"
-        base_url="$ANTHROPIC_BASE_URL"
-    elif [ -n "$OPENAI_API_KEY" ]; then
-        provider="openai"
-        api_key="$OPENAI_API_KEY"
-        base_url="$OPENAI_BASE_URL"
-    elif [ -n "$GOOGLE_API_KEY" ]; then
-        provider="google"
-        api_key="$GOOGLE_API_KEY"
-    fi
-    
-    # 获取当前模型
+    local model_ref=""
+
     if check_openclaw_installed; then
-        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
+        model_ref="$(get_current_model_ref || true)"
     fi
+    if [ -n "$model_ref" ]; then
+        provider="${model_ref%%/*}"
+        model="${model_ref#*/}"
+    fi
+
+    case "$provider" in
+        anthropic) api_key="$ANTHROPIC_API_KEY"; base_url="$ANTHROPIC_BASE_URL" ;;
+        openai) api_key="$OPENAI_API_KEY"; base_url="$OPENAI_BASE_URL" ;;
+        deepseek) api_key="$DEEPSEEK_API_KEY"; base_url="$DEEPSEEK_BASE_URL" ;;
+        moonshot|kimi) api_key="$MOONSHOT_API_KEY"; base_url="$MOONSHOT_BASE_URL" ;;
+        google|google-gemini-cli|google-antigravity) api_key="$GOOGLE_API_KEY"; base_url="$GOOGLE_BASE_URL" ;;
+        openrouter) api_key="$OPENROUTER_API_KEY"; base_url="$OPENROUTER_BASE_URL" ;;
+        groq) api_key="$GROQ_API_KEY"; base_url="$GROQ_BASE_URL" ;;
+        mistral) api_key="$MISTRAL_API_KEY"; base_url="$MISTRAL_BASE_URL" ;;
+        xai) api_key="$XAI_API_KEY" ;;
+        zai) api_key="$ZAI_API_KEY" ;;
+        minimax|minimax-cn|minimax-portal) api_key="$MINIMAX_API_KEY" ;;
+        opencode|opencode-go|opencode-zen) api_key="$OPENCODE_API_KEY" ;;
+        ollama|lmstudio) api_key="local-runtime" ;;
+    esac
     
-    if [ -n "$provider" ] && [ -n "$api_key" ] && [ "$api_key" != "your-api-key-here" ]; then
+    if [ -n "$provider" ]; then
         total_tests=$((total_tests + 1))
-        echo -e "${CYAN}[测试 $total_tests] AI API ($provider)${NC}"
-        
-        local test_url=""
-        local http_code=""
-        
-        case "$provider" in
-            anthropic)
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.anthropic.com/v1/messages" \
-                    -H "x-api-key: $api_key" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
-                    -d '{"model":"'$model'","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
-                ;;
-            google)
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                    "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$api_key" \
-                    -H "Content-Type: application/json" -d '{"contents":[{"parts":[{"text":"hi"}]}]}' 2>/dev/null)
-                ;;
-            *)
-                test_url="${base_url:-https://api.openai.com/v1}/chat/completions"
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$test_url" \
-                    -H "Authorization: Bearer $api_key" -H "Content-Type: application/json" \
-                    -d '{"model":"'$model'","messages":[{"role":"user","content":"hi"}],"max_tokens":10}' 2>/dev/null)
-                ;;
-        esac
-        
-        if [ "$http_code" = "200" ]; then
-            log_info "AI API 测试通过"
+        echo -e "${CYAN}[测试 $total_tests] AI API ($provider / $model)${NC}"
+        if test_ai_connection "$provider" "$api_key" "$model" "$base_url"; then
             passed_tests=$((passed_tests + 1))
         else
-            log_error "AI API 测试失败 (HTTP $http_code)"
+            log_error "AI API 测试失败"
         fi
         echo ""
+    else
+        log_warn "未检测到默认模型，跳过 AI API 测试"
     fi
     
     # 渠道测试提示
