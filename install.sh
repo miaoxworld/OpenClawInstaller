@@ -77,6 +77,10 @@ INSTALLER_MIRROR_RAW_URL="${OPENCLAW_INSTALLER_MIRROR_RAW_URL:-https://mirror.gh
 OFFICIAL_INSTALL_MIRROR_URL="${OPENCLAW_OFFICIAL_INSTALL_MIRROR_URL:-}"
 CURL_CONNECT_TIMEOUT="${OPENCLAW_CURL_CONNECT_TIMEOUT:-8}"
 CURL_MAX_TIME="${OPENCLAW_CURL_MAX_TIME:-30}"
+AUTO_SWAP_ENABLE="${OPENCLAW_AUTO_SWAP:-1}"
+SWAP_THRESHOLD_MB="${OPENCLAW_SWAP_THRESHOLD_MB:-4096}"
+SWAP_TARGET_MB="${OPENCLAW_SWAP_TARGET_MB:-0}"
+SWAP_FILE_BASE="${OPENCLAW_SWAP_FILE:-/swapfile.openclaw}"
 
 NO_ONBOARD="${OPENCLAW_NO_ONBOARD:-0}"
 NO_PROMPT="${OPENCLAW_NO_PROMPT:-0}"
@@ -192,6 +196,10 @@ ${INSTALLER_NAME} (OpenClaw 安装增强版)
   OPENCLAW_OFFICIAL_INSTALL_MIRROR_URL=<mirror_install_sh_url>
   OPENCLAW_CURL_CONNECT_TIMEOUT=<seconds>
   OPENCLAW_CURL_MAX_TIME=<seconds>
+  OPENCLAW_AUTO_SWAP=0|1
+  OPENCLAW_SWAP_THRESHOLD_MB=<默认4096>
+  OPENCLAW_SWAP_TARGET_MB=<默认自动(2G或4G)>
+  OPENCLAW_SWAP_FILE=</swapfile.openclaw>
 EOF
 }
 
@@ -652,35 +660,35 @@ get_total_swap_mb() {
 
 is_low_memory_linux() {
     [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || return 1
-    local mem_mb swap_mb
+    local mem_mb swap_mb target_swap_mb
     mem_mb="$(get_total_mem_mb)"
     swap_mb="$(get_total_swap_mb)"
-    [ "$mem_mb" -lt 1800 ] && [ "$swap_mb" -lt 1024 ]
+    target_swap_mb="$(get_recommended_swap_mb "$mem_mb")"
+    [ "$mem_mb" -lt "$SWAP_THRESHOLD_MB" ] && [ "$swap_mb" -lt "$target_swap_mb" ]
 }
 
-ensure_swap_for_install() {
-    is_low_memory_linux || return 0
+get_recommended_swap_mb() {
+    local mem_mb="${1:-0}"
+    local override="${SWAP_TARGET_MB:-0}"
 
-    local mem_mb swap_mb
-    mem_mb="$(get_total_mem_mb)"
-    swap_mb="$(get_total_swap_mb)"
-
-    log_warn "检测到低内存环境（内存 ${mem_mb}MB，Swap ${swap_mb}MB），安装可能被系统 OOM Kill。"
-    if ! check_command swapon || ! check_command mkswap; then
-        log_warn "系统缺少 swapon/mkswap，无法自动启用 Swap。"
-        return 1
+    if [ "$override" -gt 0 ] 2>/dev/null; then
+        echo "$override"
+        return 0
     fi
 
-    if ! confirm "是否自动创建并启用 2G Swap 以提高安装成功率？" "y"; then
-        log_warn "已跳过自动创建 Swap，安装仍可能失败。"
-        return 1
+    # 默认策略：<2G 配 4G swap；2G~4G 配 2G swap
+    if [ "$mem_mb" -lt 2048 ]; then
+        echo 4096
+    else
+        echo 2048
     fi
+}
 
-    local swap_file="/swapfile.openclaw"
-    local swap_size_mb=2048
+create_and_enable_swapfile() {
+    local swap_file="$1"
+    local swap_size_mb="$2"
 
     if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swap_file"; then
-        log_info "检测到已启用 Swap: $swap_file"
         return 0
     fi
 
@@ -697,7 +705,64 @@ ensure_swap_for_install() {
     run_as_root chmod 600 "$swap_file"
     run_as_root mkswap "$swap_file" >/dev/null 2>&1 || true
     run_as_root swapon "$swap_file"
-    log_info "已启用 Swap: $swap_file (2G)"
+}
+
+ensure_swap_for_install() {
+    is_low_memory_linux || return 0
+
+    local mem_mb swap_mb target_swap_mb missing_swap_mb
+    local primary_swap_file extra_swap_file
+    mem_mb="$(get_total_mem_mb)"
+    swap_mb="$(get_total_swap_mb)"
+    target_swap_mb="$(get_recommended_swap_mb "$mem_mb")"
+    missing_swap_mb=$((target_swap_mb - swap_mb))
+    [ "$missing_swap_mb" -lt 0 ] && missing_swap_mb=0
+
+    if [ "$AUTO_SWAP_ENABLE" != "1" ]; then
+        log_warn "检测到内存 ${mem_mb}MB (<${SWAP_THRESHOLD_MB}MB)，但 OPENCLAW_AUTO_SWAP=0，跳过自动启用 Swap。"
+        return 1
+    fi
+
+    log_warn "检测到低内存环境（内存 ${mem_mb}MB，Swap ${swap_mb}MB）。"
+    log_warn "将自动补齐 Swap 以降低 OOM 风险（目标 Swap: ${target_swap_mb}MB，推荐 2G~4G）。"
+    if ! check_command swapon || ! check_command mkswap; then
+        log_warn "系统缺少 swapon/mkswap，无法自动启用 Swap。"
+        return 1
+    fi
+
+    if [ "$missing_swap_mb" -le 0 ]; then
+        log_info "当前 Swap 已满足低内存安装要求（${swap_mb}MB）"
+        return 0
+    fi
+
+    primary_swap_file="$SWAP_FILE_BASE"
+    extra_swap_file="${SWAP_FILE_BASE}.extra"
+
+    if ! swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$primary_swap_file"; then
+        local primary_size_mb="$target_swap_mb"
+        if [ "$primary_size_mb" -gt 4096 ]; then
+            primary_size_mb=4096
+        fi
+        if [ "$primary_size_mb" -lt 1024 ]; then
+            primary_size_mb=1024
+        fi
+        create_and_enable_swapfile "$primary_swap_file" "$primary_size_mb"
+        log_info "已启用 Swap: $primary_swap_file (${primary_size_mb}MB)"
+    else
+        log_info "检测到已启用 Swap: $primary_swap_file"
+    fi
+
+    swap_mb="$(get_total_swap_mb)"
+    missing_swap_mb=$((target_swap_mb - swap_mb))
+    if [ "$missing_swap_mb" -gt 0 ]; then
+        if [ "$missing_swap_mb" -lt 512 ]; then
+            missing_swap_mb=512
+        fi
+        create_and_enable_swapfile "$extra_swap_file" "$missing_swap_mb"
+        log_info "已补充 Swap: $extra_swap_file (${missing_swap_mb}MB)"
+    fi
+
+    log_info "当前总 Swap: $(get_total_swap_mb)MB"
     return 0
 }
 
@@ -754,8 +819,8 @@ npm_install_openclaw_with_fallback() {
     log_error "npm 回退安装仍然失败（第 2 次，exit=$exit_code）"
     tail -n 80 "$log2" 2>/dev/null || true
     echo ""
-    echo -e "${YELLOW}建议先手动启用 Swap 后重试:${NC}"
-    echo "  sudo fallocate -l 2G /swapfile.openclaw || sudo dd if=/dev/zero of=/swapfile.openclaw bs=1M count=2048"
+    echo -e "${YELLOW}建议先手动启用 Swap 后重试（推荐 2G~4G）:${NC}"
+    echo "  sudo fallocate -l 4G /swapfile.openclaw || sudo dd if=/dev/zero of=/swapfile.openclaw bs=1M count=4096"
     echo "  sudo chmod 600 /swapfile.openclaw && sudo mkswap /swapfile.openclaw && sudo swapon /swapfile.openclaw"
     return 1
 }
