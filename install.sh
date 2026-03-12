@@ -80,6 +80,7 @@ CURL_MAX_TIME="${OPENCLAW_CURL_MAX_TIME:-30}"
 GATEWAY_HOST="${OPENCLAW_GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-13145}"
 AUTO_SWAP_ENABLE="${OPENCLAW_AUTO_SWAP:-1}"
+SWAP_PERSIST_ENABLE="${OPENCLAW_SWAP_PERSIST:-1}"
 SWAP_THRESHOLD_MB="${OPENCLAW_SWAP_THRESHOLD_MB:-4096}"
 SWAP_TARGET_MB="${OPENCLAW_SWAP_TARGET_MB:-0}"
 SWAP_FILE_BASE="${OPENCLAW_SWAP_FILE:-/swapfile.openclaw}"
@@ -203,6 +204,7 @@ ${INSTALLER_NAME} (OpenClaw 安装增强版)
   OPENCLAW_GATEWAY_HOST=<默认127.0.0.1>
   OPENCLAW_GATEWAY_PORT=<默认13145>
   OPENCLAW_AUTO_SWAP=0|1
+  OPENCLAW_SWAP_PERSIST=0|1
   OPENCLAW_SWAP_THRESHOLD_MB=<默认4096>
   OPENCLAW_SWAP_TARGET_MB=<默认自动(2G或4G)>
   OPENCLAW_SWAP_FILE=</swapfile.openclaw>
@@ -747,6 +749,32 @@ create_and_enable_swapfile() {
     run_as_root swapon "$swap_file"
 }
 
+persist_swapfile_entry() {
+    local swap_file="$1"
+    [ "$SWAP_PERSIST_ENABLE" = "1" ] || return 0
+
+    if [ ! -f "$swap_file" ]; then
+        return 1
+    fi
+    if [ ! -f /etc/fstab ]; then
+        log_warn "未找到 /etc/fstab，无法持久化 Swap。"
+        return 1
+    fi
+
+    if awk -v f="$swap_file" '$1==f && $2=="none" && $3=="swap" {found=1} END{exit !found}' /etc/fstab 2>/dev/null; then
+        log_info "Swap 已存在持久化配置: $swap_file"
+        return 0
+    fi
+
+    if printf "%s none swap sw 0 0\n" "$swap_file" | run_as_root tee -a /etc/fstab >/dev/null; then
+        log_info "已写入 Swap 持久化: $swap_file -> /etc/fstab"
+        return 0
+    fi
+
+    log_warn "写入 /etc/fstab 失败，重启后需手动 swapon $swap_file"
+    return 1
+}
+
 ensure_swap_for_install() {
     is_low_memory_linux || return 0
 
@@ -789,9 +817,11 @@ ensure_swap_for_install() {
         if ! create_and_enable_swapfile "$primary_swap_file" "$primary_size_mb"; then
             log_warn "创建/启用 Swap 失败: $primary_swap_file"
         fi
+        persist_swapfile_entry "$primary_swap_file" || true
         log_info "已启用 Swap: $primary_swap_file (${primary_size_mb}MB)"
     else
         log_info "检测到已启用 Swap: $primary_swap_file"
+        persist_swapfile_entry "$primary_swap_file" || true
     fi
 
     swap_mb="$(get_total_swap_mb)"
@@ -803,6 +833,7 @@ ensure_swap_for_install() {
         if ! create_and_enable_swapfile "$extra_swap_file" "$missing_swap_mb"; then
             log_warn "补充 Swap 失败: $extra_swap_file"
         fi
+        persist_swapfile_entry "$extra_swap_file" || true
         log_info "已补充 Swap: $extra_swap_file (${missing_swap_mb}MB)"
     fi
 
