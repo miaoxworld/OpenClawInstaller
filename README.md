@@ -128,6 +128,9 @@ curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/c
 - **Groq** - 超快推理，llama-3.3-70b-versatile / llama-3.1-8b-instant / mixtral-8x7b
 - **Mistral AI** - mistral-large-latest / mistral-small-latest / codestral-latest
 
+**高性价比:**
+- **[MiniMax](https://platform.minimax.io/)** - MiniMax-M2.5 / MiniMax-M2.5-highspeed，204K 上下文，支持国际版和国内版
+
 **本地部署:**
 - **Ollama** - 本地部署，无需 API Key (llama3 / llama3:70b / mistral)
 
