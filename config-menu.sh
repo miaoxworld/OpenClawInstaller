@@ -2345,19 +2345,23 @@ config_minimax() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "MiniMax-M2.5 (推荐，最新旗舰)" "⭐"
-    print_menu_item "2" "MiniMax-M2.5-highspeed (高速版)" "⚡"
-    print_menu_item "3" "自定义模型名称" "✏️"
+    print_menu_item "1" "MiniMax-M2.7 (推荐，最新旗舰)" "⭐"
+    print_menu_item "2" "MiniMax-M2.7-highspeed (高速版)" "⚡"
+    print_menu_item "3" "MiniMax-M2.5" "🔹"
+    print_menu_item "4" "MiniMax-M2.5-highspeed" "🔹"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
 
-    read -p "$(echo -e "${YELLOW}请选择 [1-3] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
 
     case $model_choice in
-        1) model="MiniMax-M2.5" ;;
-        2) model="MiniMax-M2.5-highspeed" ;;
-        3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="MiniMax-M2.5" ;;
+        1) model="MiniMax-M2.7" ;;
+        2) model="MiniMax-M2.7-highspeed" ;;
+        3) model="MiniMax-M2.5" ;;
+        4) model="MiniMax-M2.5-highspeed" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="MiniMax-M2.7" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
