@@ -1,0 +1,45 @@
+<svg width="960" height="320" viewBox="0 0 960 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="960" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#08131F"/>
+      <stop offset="1" stop-color="#0E2233"/>
+    </linearGradient>
+    <linearGradient id="claw" x1="62" y1="44" x2="248" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF6B5A"/>
+      <stop offset="1" stop-color="#FF3D2E"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="188" y1="74" x2="220" y2="146" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FDE68A"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="soft" x="0" y="0" width="960" height="320" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="320" rx="28" fill="url(#bg)"/>
+
+  <g opacity="0.22" filter="url(#soft)">
+    <circle cx="160" cy="96" r="56" fill="#FF5A48"/>
+    <circle cx="876" cy="276" r="60" fill="#1F9CF0"/>
+  </g>
+
+  <g transform="translate(36,24)">
+    <rect x="8" y="8" width="260" height="260" rx="44" fill="#0B1A2A" stroke="#17334A" stroke-width="2"/>
+
+    <path d="M112 74C132 60 166 64 182 83L165 100C155 90 136 88 125 96C113 104 109 122 116 136L96 150C79 124 87 88 112 74Z" fill="url(#claw)"/>
+    <path d="M88 170C96 202 128 224 162 216L156 188C136 192 117 180 112 160L88 170Z" fill="url(#claw)"/>
+    <path d="M203 118C229 132 240 164 231 191L206 182C210 168 204 152 191 145L203 118Z" fill="url(#claw)"/>
+
+    <circle cx="142" cy="146" r="36" fill="#13283D" stroke="#274A67" stroke-width="3"/>
+
+    <path d="M156 116L132 156H150L139 188L172 142H152L156 116Z" fill="url(#bolt)"/>
+  </g>
+
+  <g transform="translate(334,88)">
+    <text x="0" y="74" fill="#F4F8FB" font-family="Avenir Next, Segoe UI, sans-serif" font-size="66" font-weight="700" letter-spacing="1.2">OpenClaw</text>
+    <text x="0" y="130" fill="#A9C0D4" font-family="Avenir Next, Segoe UI, sans-serif" font-size="38" font-weight="500" letter-spacing="2.6">INSTALLER</text>
+    <rect x="0" y="152" width="504" height="2" fill="#1D415D"/>
+    <text x="0" y="190" fill="#7FA2BE" font-family="Avenir Next, Segoe UI, sans-serif" font-size="25" font-weight="500">One Command. Full Setup. Stable Upgrades.</text>
+  </g>
+</svg>

@@ -35,8 +35,7 @@ RUN mkdir -p /root/.openclaw/logs \
     /root/.openclaw/skills \
     /root/.openclaw/backups
 
-# 复制默认配置和技能
-COPY examples/config.example.yaml /root/.openclaw/config.yaml.example
+# 复制技能示例
 COPY examples/skills/ /root/.openclaw/skills/
 
 # 设置卷挂载点
@@ -54,4 +53,4 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["openclaw", "start", "--daemon"]
+CMD ["openclaw", "gateway", "--port", "18789"]

@@ -42,7 +42,7 @@ llm:
   # Mistral: https://console.mistral.ai/
   # xAI: https://console.x.ai/
   # 智谱: https://open.bigmodel.cn/
-  # MiniMax: https://platform.minimax.chat/
+  # MiniMax: https://platform.minimax.io/
   # OpenCode: https://opencode.ai/
   api_key: "sk-ant-your-api-key-here"
   
@@ -54,7 +54,7 @@ llm:
   # Mistral: mistral-large-latest / mistral-medium-latest / codestral-latest
   # xAI: grok-4-fast / grok-4 / grok-3-fast-latest / grok-2-vision-latest
   # 智谱 (zai): glm-4.7 / glm-4.6 / glm-4.6v / glm-4.5-flash
-  # MiniMax: MiniMax-M2.1 / MiniMax-M2
+  # MiniMax: MiniMax-M2.7 / MiniMax-M2.7-highspeed / MiniMax-M2.5 / MiniMax-M2.5-highspeed
   # OpenCode: claude-sonnet-4-5 / gpt-5 / gemini-3-pro / glm-4.7-free
   # Ollama: llama3 / mistral / codellama 等
   # OpenAI Compatible: 根据你的服务支持的模型填写

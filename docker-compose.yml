@@ -2,9 +2,9 @@
 # OpenClaw Docker Compose 配置
 # 
 # 使用方法:
-#   1. 复制 examples/config.example.yaml 到 ~/.openclaw/config.yaml
-#   2. 编辑配置文件，填入你的 API Key
-#   3. 运行: docker-compose up -d
+#   1. 使用 ~/.openclaw/env + ~/.openclaw/openclaw.json（与命令行安装一致）
+#   2. 运行: docker-compose up -d
+#   3. 升级后建议: openclaw update --restart && openclaw doctor --fix && openclaw plugins update --all
 #   4. 查看日志: docker-compose logs -f
 # ============================================================
 

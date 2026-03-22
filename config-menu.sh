@@ -10,19 +10,36 @@
 
 # ================================ TTY 检测 ================================
 # 当通过 curl | bash 或被其他脚本调用时，stdin 可能不是终端
-# 需要从 /dev/tty 读取用户输入
-if [ -t 0 ]; then
-    # stdin 是终端
-    TTY_INPUT="/dev/stdin"
-else
-    # stdin 是管道，使用 /dev/tty
-    if [ -e /dev/tty ]; then
-        TTY_INPUT="/dev/tty"
-    else
-        echo "错误: 无法获取终端输入，请直接运行此脚本"
-        echo "用法: bash config-menu.sh"
-        exit 1
+# 需要优先选择“可读”的输入源，避免 /dev/tty 存在但不可用导致循环报错
+resolve_tty_input() {
+    if [ -t 0 ]; then
+        echo "/dev/stdin"
+        return 0
     fi
+
+    if [ -e /dev/tty ] && ( : < /dev/tty ) 2>/dev/null; then
+        echo "/dev/tty"
+        return 0
+    fi
+
+    if [ -r /dev/stdin ]; then
+        echo "/dev/stdin"
+        return 0
+    fi
+
+    return 1
+}
+
+if ! TTY_INPUT="$(resolve_tty_input)"; then
+    echo "错误: 无法获取终端输入，请直接运行此脚本"
+    echo "用法: bash config-menu.sh"
+    exit 1
+fi
+
+if [ "$TTY_INPUT" = "/dev/stdin" ] && [ ! -t 0 ]; then
+    echo "错误: 当前会话不可交互（stdin 非终端，且 /dev/tty 不可用）"
+    echo "请在可交互终端中运行: bash config-menu.sh"
+    exit 1
 fi
 
 # 统一的读取函数（支持非 TTY 模式）
@@ -30,7 +47,35 @@ read_input() {
     local prompt="$1"
     local var_name="$2"
     echo -en "$prompt"
-    read $var_name < "$TTY_INPUT"
+    if ! read $var_name < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，请在可交互终端中重新运行。"
+        exit 1
+    fi
+}
+
+# 从 TTY 读取敏感输入（默认不回显）
+read_secret_input() {
+    local prompt="$1"
+    local var_name="$2"
+    echo -e "${GRAY}（自动隐藏，直接粘贴后回车即可）${NC}"
+    echo -en "$prompt"
+    if stty -echo < "$TTY_INPUT" 2>/dev/null; then
+        if ! read $var_name < "$TTY_INPUT"; then
+            stty echo < "$TTY_INPUT" 2>/dev/null || true
+            echo ""
+            log_error "输入读取失败，请在可交互终端中重新运行。"
+            exit 1
+        fi
+        stty echo < "$TTY_INPUT" 2>/dev/null || true
+    else
+        if ! read $var_name < "$TTY_INPUT"; then
+            echo ""
+            log_error "输入读取失败，请在可交互终端中重新运行。"
+            exit 1
+        fi
+    fi
+    echo ""
 }
 
 # ================================ 颜色定义 ================================
@@ -56,11 +101,39 @@ CONFIG_DIR="$HOME/.openclaw"
 OPENCLAW_ENV="$CONFIG_DIR/env"
 OPENCLAW_JSON="$CONFIG_DIR/openclaw.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
+OPENCLAW_BIN_RESOLVED=""
+DEFAULT_GATEWAY_HOST="${OPENCLAW_GATEWAY_HOST:-127.0.0.1}"
+DEFAULT_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-13145}"
+
+# 飞书插件策略（仅官方插件，支持版本 pin）
+FEISHU_PLUGIN_OFFICIAL="@openclaw/feishu"
+# QQ 社区插件策略（可选，不默认）
+QQ_PLUGIN_COMMUNITY="@sliverp/qqbot"
+QQ_PLUGIN_VERSION_DEFAULT="${OPENCLAW_QQ_PLUGIN_VERSION:-1.5.4}"
+# 微信社区插件策略（LangBot WeChatPad 适配）
+WECHAT_PLUGIN_LANGBOT="openclaw-wechat-channel"
+WECHAT_PLUGIN_VERSION_DEFAULT="${OPENCLAW_WECHAT_PLUGIN_VERSION:-0.5.0}"
+WECHATPAD_CALLBACK_PATH_DEFAULT="${OPENCLAW_WECHATPAD_CALLBACK_PATH:-/api/callback/wechatpadpro}"
+# 企业微信社区插件策略（WeCom）
+WECOM_PLUGIN_COMMUNITY="@marshulll/openclaw-wecom"
+WECOM_PLUGIN_VERSION_DEFAULT="${OPENCLAW_WECOM_PLUGIN_VERSION:-0.1.41}"
+WECOM_WEBHOOK_BOT_DEFAULT="${OPENCLAW_WECOM_WEBHOOK_BOT_PATH:-/wecom/bot}"
+WECOM_WEBHOOK_APP_DEFAULT="${OPENCLAW_WECOM_WEBHOOK_APP_PATH:-/wecom/app}"
+INSTALLER_REPO="leecyno1/auto-install-Openclaw"
+INSTALLER_RAW_URL="https://raw.githubusercontent.com/${INSTALLER_REPO}/main"
+AUTO_FIX_OPENCLAW_REPO_URL="${AUTO_FIX_OPENCLAW_REPO_URL:-https://github.com/leecyno1/auto-fix-openclaw.git}"
+AUTO_FIX_OPENCLAW_REPO_MIRROR_URL="${AUTO_FIX_OPENCLAW_REPO_MIRROR_URL:-https://mirror.ghproxy.com/https://github.com/leecyno1/auto-fix-openclaw.git}"
+AUTO_FIX_OPENCLAW_DIR="${AUTO_FIX_OPENCLAW_DIR:-$HOME/.openclaw/tools/auto-fix-openclaw}"
+AUTO_FIX_OPENCLAW_BIN="$AUTO_FIX_OPENCLAW_DIR/bin/auto-fix-openclaw"
 
 # ================================ 工具函数 ================================
 
 clear_screen() {
-    clear
+    if [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ] && command -v clear >/dev/null 2>&1; then
+        clear
+    else
+        printf '\n'
+    fi
 }
 
 print_header() {
@@ -101,7 +174,11 @@ log_error() {
 press_enter() {
     echo ""
     echo -en "${GRAY}按 Enter 键继续...${NC}"
-    read < "$TTY_INPUT"
+    if ! read < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，退出配置菜单。"
+        exit 1
+    fi
 }
 
 confirm() {
@@ -115,7 +192,11 @@ confirm() {
     fi
     
     echo -en "${YELLOW}$message $prompt: ${NC}"
-    read response < "$TTY_INPUT"
+    if ! read response < "$TTY_INPUT"; then
+        echo ""
+        log_error "输入读取失败，退出配置菜单。"
+        exit 1
+    fi
     response=${response:-$default}
     
     case "$response" in
@@ -225,6 +306,146 @@ PYEOF
     fi
 }
 
+# 从 plugins.allow / plugins.entries / channels 中移除插件
+remove_plugin_from_allow() {
+    local plugin_id="$1"
+
+    if [ ! -f "$OPENCLAW_JSON" ]; then
+        log_warn "配置文件不存在: $OPENCLAW_JSON"
+        return 1
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        python3 << PYEOF
+import json
+import os
+
+config_path = os.path.expanduser("$OPENCLAW_JSON")
+plugin_id = "$plugin_id"
+
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    plugins = config.get('plugins', {})
+    allow = plugins.get('allow', [])
+    if isinstance(allow, list):
+        plugins['allow'] = [p for p in allow if p != plugin_id]
+
+    entries = plugins.get('entries', {})
+    if isinstance(entries, dict) and plugin_id in entries:
+        entries.pop(plugin_id, None)
+        plugins['entries'] = entries
+
+    config['plugins'] = plugins
+
+    channels = config.get('channels', {})
+    if isinstance(channels, dict):
+        channels.pop(plugin_id, None)
+        config['channels'] = channels
+
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+except Exception as e:
+    print(f"更新配置失败: {e}")
+    exit(1)
+PYEOF
+        return $?
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg plugin "$plugin_id" '
+        .plugins //= {"allow": [], "entries": {}} |
+        .plugins.allow = ((.plugins.allow // []) | map(select(. != $plugin))) |
+        .plugins.entries = ((.plugins.entries // {}) | del(.[$plugin])) |
+        .channels = ((.channels // {}) | del(.[$plugin]))
+    ' "$OPENCLAW_JSON" > "$tmp_file"
+
+    if [ $? -eq 0 ] && [ -s "$tmp_file" ]; then
+        mv "$tmp_file" "$OPENCLAW_JSON"
+        log_info "已清理 $plugin_id 在本地配置中的残留"
+        return 0
+    fi
+
+    rm -f "$tmp_file"
+    log_error "清理 $plugin_id 配置残留失败"
+    return 1
+}
+
+# 将逗号分隔字符串转换为 JSON 数组
+build_json_array_from_csv() {
+    local csv="$1"
+    local json="["
+    local count=0
+    local item=""
+    local trimmed=""
+    local escaped=""
+
+    IFS=',' read -r -a __csv_items <<< "$csv"
+    for item in "${__csv_items[@]}"; do
+        trimmed="$(echo "$item" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [ -n "$trimmed" ] || continue
+        escaped="${trimmed//\\/\\\\}"
+        escaped="${escaped//\"/\\\"}"
+        if [ $count -gt 0 ]; then
+            json+=","
+        fi
+        json+="\"$escaped\""
+        count=$((count + 1))
+    done
+
+    json+="]"
+    echo "$json"
+}
+
+# 直接写入 channels.<channel>.allowFrom，确保数组类型准确
+set_channel_allow_from_json() {
+    local channel="$1"
+    local allow_json="$2"
+
+    if [ ! -f "$OPENCLAW_JSON" ]; then
+        openclaw config set "channels.${channel}.allowFrom" "$allow_json" > /dev/null 2>&1
+        return $?
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        python3 << PYEOF
+import json
+import os
+
+config_path = os.path.expanduser("$OPENCLAW_JSON")
+channel = "$channel"
+allow_from = json.loads('''$allow_json''')
+
+with open(config_path, 'r') as f:
+    cfg = json.load(f)
+cfg.setdefault('channels', {})
+cfg['channels'].setdefault(channel, {})
+cfg['channels'][channel]['allowFrom'] = allow_from
+with open(config_path, 'w') as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PYEOF
+        return $?
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg channel "$channel" --argjson allow "$allow_json" '
+        .channels //= {} |
+        .channels[$channel] //= {} |
+        .channels[$channel].allowFrom = $allow
+    ' "$OPENCLAW_JSON" > "$tmp_file"
+
+    if [ $? -eq 0 ] && [ -s "$tmp_file" ]; then
+        mv "$tmp_file" "$OPENCLAW_JSON"
+        return 0
+    fi
+
+    rm -f "$tmp_file"
+    return 1
+}
+
 # 从环境变量文件读取配置
 get_env_value() {
     local key=$1
@@ -235,15 +456,207 @@ get_env_value() {
 
 # ================================ 测试功能 ================================
 
+ensure_openclaw_on_path() {
+    # 补充常见全局 bin，避免“已安装但当前 shell 不可见”
+    local npm_prefix=""
+    local npm_bin=""
+    local candidate=""
+
+    if command -v npm &> /dev/null; then
+        npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+        if [ -n "$npm_prefix" ] && [ "$npm_prefix" != "undefined" ] && [ "$npm_prefix" != "null" ]; then
+            npm_bin="$npm_prefix/bin"
+            if [ -d "$npm_bin" ]; then
+                case ":$PATH:" in
+                    *":$npm_bin:"*) ;;
+                    *) export PATH="$npm_bin:$PATH" ;;
+                esac
+            fi
+        fi
+    fi
+
+    for candidate in "$HOME/.npm-global/bin" "$HOME/.local/bin" "/usr/local/bin" "/usr/bin"; do
+        if [ -d "$candidate" ]; then
+            case ":$PATH:" in
+                *":$candidate:"*) ;;
+                *) export PATH="$candidate:$PATH" ;;
+            esac
+        fi
+    done
+}
+
+resolve_openclaw_bin() {
+    ensure_openclaw_on_path
+
+    if command -v openclaw &> /dev/null; then
+        if [ "$(type -t openclaw 2>/dev/null)" = "function" ] && [ -n "$OPENCLAW_BIN_RESOLVED" ]; then
+            echo "$OPENCLAW_BIN_RESOLVED"
+            return 0
+        fi
+        command -v openclaw
+        return 0
+    fi
+    if command -v claw &> /dev/null; then
+        command -v claw
+        return 0
+    fi
+
+    if command -v npm &> /dev/null && command -v node &> /dev/null; then
+        local npm_root=""
+        npm_root="$(npm root -g 2>/dev/null || true)"
+        if [ -n "$npm_root" ]; then
+            local pkg_json="$npm_root/openclaw/package.json"
+            if [ -f "$pkg_json" ]; then
+                local candidate
+                candidate=$(node -e '
+const fs=require("fs");
+const path=require("path");
+const pkg=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const bin=(pkg.bin && (pkg.bin.openclaw || pkg.bin.claw)) || "";
+if (bin) process.stdout.write(path.resolve(path.dirname(process.argv[1]), bin));
+' "$pkg_json" 2>/dev/null || true)
+                if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+                    chmod +x "$candidate" 2>/dev/null || true
+                    echo "$candidate"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+ensure_openclaw_alias() {
+    if command -v openclaw &> /dev/null; then
+        return 0
+    fi
+
+    OPENCLAW_BIN_RESOLVED="$(resolve_openclaw_bin || true)"
+    if [ -z "$OPENCLAW_BIN_RESOLVED" ]; then
+        return 1
+    fi
+
+    # 当官方仅暴露 claw 时，动态注入 openclaw 兼容命令
+    openclaw() {
+        "$OPENCLAW_BIN_RESOLVED" "$@"
+    }
+    return 0
+}
+
 # 检查 OpenClaw 是否已安装
 check_openclaw_installed() {
-    command -v openclaw &> /dev/null
+    ensure_openclaw_on_path
+    command -v openclaw &> /dev/null || ensure_openclaw_alias
+}
+
+is_valid_port() {
+    local p="$1"
+    [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]
+}
+
+get_gateway_port() {
+    local port="$DEFAULT_GATEWAY_PORT"
+
+    if [ -f "$OPENCLAW_ENV" ]; then
+        local env_port
+        env_port="$(grep '^export OPENCLAW_GATEWAY_PORT=' "$OPENCLAW_ENV" 2>/dev/null | tail -1 | sed 's/^export OPENCLAW_GATEWAY_PORT=//')"
+        env_port="$(echo "$env_port" | tr -d '"'\''[:space:]')"
+        if is_valid_port "$env_port"; then
+            port="$env_port"
+        fi
+    fi
+
+    if check_openclaw_installed; then
+        local cfg_port
+        cfg_port="$(openclaw config get gateway.port 2>/dev/null || true)"
+        cfg_port="$(echo "$cfg_port" | tr -d '"'\''[:space:]')"
+        if is_valid_port "$cfg_port"; then
+            port="$cfg_port"
+        fi
+    fi
+
+    echo "$port"
+}
+
+get_gateway_host() {
+    local host="$DEFAULT_GATEWAY_HOST"
+
+    if [ -f "$OPENCLAW_ENV" ]; then
+        local env_host
+        env_host="$(grep '^export OPENCLAW_GATEWAY_HOST=' "$OPENCLAW_ENV" 2>/dev/null | tail -1 | sed 's/^export OPENCLAW_GATEWAY_HOST=//')"
+        env_host="$(echo "$env_host" | tr -d '"'\''[:space:]')"
+        if [ -n "$env_host" ]; then
+            host="$env_host"
+        fi
+    fi
+
+    if check_openclaw_installed; then
+        local cfg_host
+        cfg_host="$(openclaw config get gateway.host 2>/dev/null || true)"
+        cfg_host="$(echo "$cfg_host" | tr -d '"'\''[:space:]')"
+        if [ -n "$cfg_host" ] && [ "$cfg_host" != "undefined" ]; then
+            host="$cfg_host"
+        fi
+    fi
+
+    echo "$host"
+}
+
+upsert_env_export() {
+    local key="$1"
+    local value="$2"
+    local file="$OPENCLAW_ENV"
+
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    touch "$file" 2>/dev/null || true
+
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v k="$key" -v v="$value" '
+        BEGIN { done=0 }
+        $0 ~ "^export " k "=" { print "export " k "=" v; done=1; next }
+        { print }
+        END { if (!done) print "export " k "=" v }
+    ' "$file" > "$tmp_file" && mv "$tmp_file" "$file"
+    chmod 600 "$file" 2>/dev/null || true
+}
+
+remove_env_export() {
+    local key="$1"
+    local file="$OPENCLAW_ENV"
+
+    [ -f "$file" ] || return 0
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v k="$key" '$0 !~ "^export " k "=" { print }' "$file" > "$tmp_file" && mv "$tmp_file" "$file"
+    chmod 600 "$file" 2>/dev/null || true
+}
+
+get_gateway_pid() {
+    local gateway_port
+    gateway_port="$(get_gateway_port)"
+    get_port_pid "$gateway_port"
+}
+
+get_port_pid() {
+    local port="$1"
+    local pid=""
+    if command -v lsof &> /dev/null; then
+        pid=$(lsof -ti :"$port" 2>/dev/null | head -1)
+    fi
+    if [ -z "$pid" ] && command -v pgrep &> /dev/null; then
+        pid=$(pgrep -f "openclaw gateway" 2>/dev/null | head -1)
+    fi
+    echo "$pid"
 }
 
 # 重启 Gateway 使渠道配置生效
 restart_gateway_for_channel() {
     echo ""
     log_info "正在重启 Gateway..."
+    local gateway_port
+    gateway_port="$(get_gateway_port)"
     
     # 加载环境变量
     if [ -f "$OPENCLAW_ENV" ]; then
@@ -261,7 +674,8 @@ restart_gateway_for_channel() {
     sleep 2
     
     # 使用端口检测判断服务是否启动成功（更可靠）
-    local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local gateway_pid
+    gateway_pid=$(get_gateway_pid)
     
     if [ -n "$gateway_pid" ]; then
         log_info "Gateway 已重启！(PID: $gateway_pid)"
@@ -284,15 +698,41 @@ restart_gateway_for_channel() {
         echo ""
         echo -e "${CYAN}查看日志: ${WHITE}openclaw logs --follow${NC}"
         echo -e "${CYAN}停止服务: ${WHITE}openclaw gateway stop${NC}"
+        
+        # 渠道状态探针（重启后）
+        echo ""
+        echo -e "${CYAN}━━━ 渠道状态探针 ━━━${NC}"
+        openclaw channels list 2>/dev/null | head -12 | sed 's/^/  /' || echo "  (无法获取渠道状态)"
     else
         log_warn "Gateway 可能未正常启动"
         echo ""
         echo -e "${YELLOW}命令输出:${NC}"
         echo "$restart_output" | head -10 | sed 's/^/  /'
         echo ""
-        echo -e "${CYAN}建议:${NC}"
-        echo "  • 运行 ${WHITE}openclaw doctor --fix${NC} 修复配置问题"
-        echo "  • 运行 ${WHITE}openclaw gateway start${NC} 手动启动"
+        log_info "尝试按配置端口 ${gateway_port} 直接拉起 Gateway..."
+        if command -v setsid &> /dev/null; then
+            if [ -f "$OPENCLAW_ENV" ]; then
+                setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            else
+                setsid openclaw gateway --port "${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            fi
+        else
+            if [ -f "$OPENCLAW_ENV" ]; then
+                nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            else
+                nohup openclaw gateway --port "${gateway_port}" > /tmp/openclaw-gateway.log 2>&1 &
+            fi
+            disown 2>/dev/null || true
+        fi
+        sleep 2
+        gateway_pid="$(get_gateway_pid)"
+        if [ -n "$gateway_pid" ]; then
+            log_info "按端口 ${gateway_port} 启动成功 (PID: $gateway_pid)"
+        else
+            echo -e "${CYAN}建议:${NC}"
+            echo "  • 运行 ${WHITE}openclaw doctor --fix${NC} 修复配置问题"
+            echo "  • 运行 ${WHITE}openclaw gateway --port ${gateway_port}${NC} 手动启动"
+        fi
     fi
 }
 
@@ -303,6 +743,43 @@ check_gateway_running() {
         return $?
     fi
     return 1
+}
+
+# 从 openclaw models status --json 读取当前默认模型
+get_current_model_ref() {
+    if ! check_openclaw_installed; then
+        return 1
+    fi
+
+    local model_ref=""
+    if command -v node &> /dev/null; then
+        model_ref=$(openclaw models status --json 2>/dev/null | node -e '
+const fs = require("fs");
+try {
+  const raw = fs.readFileSync(0, "utf8");
+  const data = JSON.parse(raw || "{}");
+  const v = (data.resolvedDefault || data.defaultModel || "").trim();
+  if (v) process.stdout.write(v);
+} catch {}
+' 2>/dev/null || true)
+    elif command -v python3 &> /dev/null; then
+        model_ref=$(openclaw models status --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    v=(d.get("resolvedDefault") or d.get("defaultModel") or "").strip()
+    if v: print(v,end="")
+except Exception:
+    pass
+' 2>/dev/null || true)
+    else
+        model_ref=$(openclaw config get agents.defaults.model.primary 2>/dev/null || true)
+        if [ -z "$model_ref" ] || [ "$model_ref" = "undefined" ]; then
+            model_ref=$(openclaw config get models.default 2>/dev/null || true)
+        fi
+    fi
+
+    [ -n "$model_ref" ] && [ "$model_ref" != "undefined" ] && echo "$model_ref"
 }
 
 # 测试 AI API 连接
@@ -324,58 +801,67 @@ test_ai_connection() {
     # 确保环境变量已加载
     [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
-    # 显示当前模型配置
+    local target_model_ref=""
+    if [ -n "$provider" ] && [ -n "$model" ]; then
+        target_model_ref="${provider}/${model}"
+    else
+        target_model_ref="$(get_current_model_ref || true)"
+    fi
+
     echo -e "${CYAN}当前模型配置:${NC}"
-    openclaw models status 2>&1 | grep -E "Default|Auth|effective" | head -5
+    openclaw models status 2>&1 | head -12
     echo ""
-    
-    # 使用 openclaw agent --local 测试
-    echo -e "${YELLOW}运行 openclaw agent --local 测试...${NC}"
+
+    if [ -n "$target_model_ref" ]; then
+        echo -e "${CYAN}目标模型:${NC} ${WHITE}${target_model_ref}${NC}"
+    fi
     echo ""
-    
-    local result
-    # 添加 || true 防止命令失败导致函数退出
-    result=$(openclaw agent --local --to "+1234567890" --message "回复 OK" 2>&1) || true
-    local exit_code=$?
-    
-    # 过滤掉 Node.js 警告信息和 JavaScript 错误
-    result=$(echo "$result" | grep -v "ExperimentalWarning" | grep -v "at emitExperimentalWarning" | grep -v "at ModuleLoader" | grep -v "at callTranslator" | grep -v "Cannot read properties of undefined" | grep -v "TypeError:" | grep -v "ReferenceError:")
-    
+
+    echo -e "${YELLOW}运行官方模型探针 (openclaw models status --probe --check)...${NC}"
+    local probe_output=""
+    local probe_exit=0
+    if [ -n "$provider" ]; then
+        probe_output=$(openclaw models status --probe --check --probe-provider "$provider" --json 2>&1)
+        probe_exit=$?
+    else
+        probe_output=$(openclaw models status --probe --check --json 2>&1)
+        probe_exit=$?
+    fi
+
+    if [ $probe_exit -eq 0 ]; then
+        log_info "OpenClaw AI 探针通过，模型认证链路正常。"
+        return 0
+    fi
+
+    log_warn "模型探针未通过，尝试一次本地 agent 调用获取详细报错..."
+    local result=""
+    local exit_code=1
+    if [ -n "$target_model_ref" ]; then
+        result=$(openclaw agent --local --model "$target_model_ref" --message "只回复 OK" 2>&1)
+        exit_code=$?
+    else
+        result=$(openclaw agent --local --message "只回复 OK" 2>&1)
+        exit_code=$?
+    fi
+
     echo ""
     if [ $exit_code -eq 0 ] && ! echo "$result" | grep -qiE "error|failed|401|403|Unknown model"; then
         log_info "OpenClaw AI 测试成功！"
-        echo ""
-        # 显示 AI 响应（过滤掉空行和无关内容）
-        local ai_response=$(echo "$result" | grep -v "^$" | grep -v "^\[" | grep -v "^{" | head -5)
-        if [ -n "$ai_response" ]; then
-            echo -e "  ${CYAN}AI 响应:${NC}"
-            echo "$ai_response" | sed 's/^/    /'
-        else
-            echo -e "  ${GREEN}✓ API 连接正常${NC}"
-        fi
         return 0
-    else
-        log_error "OpenClaw AI 测试失败"
-        echo ""
-        echo -e "  ${RED}错误信息:${NC}"
-        echo "$result" | head -5 | sed 's/^/    /'
-        echo ""
-        
-        # 提供修复建议
-        if echo "$result" | grep -q "Unknown model"; then
-            echo -e "${YELLOW}提示: 模型不被 OpenClaw 识别${NC}"
-            echo "  运行: openclaw configure --section model"
-        elif echo "$result" | grep -q "401\|Incorrect API key"; then
-            echo -e "${YELLOW}提示: API Key 无效或 Base URL 配置不正确${NC}"
-            echo "  OpenClaw 可能不支持自定义 API 地址"
-            echo "  运行: openclaw configure --section model"
-        fi
-        echo ""
-        echo "  其他诊断命令:"
-        echo "    openclaw doctor"
-        echo "    openclaw models status"
-        return 1
     fi
+
+    log_error "OpenClaw AI 测试失败"
+    echo ""
+    echo -e "  ${RED}探针输出:${NC}"
+    echo "$probe_output" | head -10 | sed 's/^/    /'
+    echo ""
+    echo -e "  ${RED}调用输出:${NC}"
+    echo "$result" | head -10 | sed 's/^/    /'
+    echo ""
+    echo "  诊断命令:"
+    echo "    openclaw doctor"
+    echo "    openclaw models status --probe --check --json"
+    return 1
 }
 
 # 测试 Telegram 机器人
@@ -857,6 +1343,20 @@ run_openclaw_health() {
     fi
 }
 
+run_official_model_onboard() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+    echo ""
+    log_info "启动官方模型配置向导: openclaw onboard"
+    if [ -e /dev/tty ]; then
+        openclaw onboard < /dev/tty
+    else
+        openclaw onboard
+    fi
+}
+
 # ================================ 状态显示 ================================
 
 show_status() {
@@ -868,11 +1368,12 @@ show_status() {
     echo ""
     
     # OpenClaw 服务状态
-    if command -v openclaw &> /dev/null; then
+    if check_openclaw_installed; then
         echo -e "  ${GREEN}✓${NC} OpenClaw 已安装: $(openclaw --version 2>/dev/null || echo 'unknown')"
         
         # 使用端口检测判断服务运行状态（更可靠）
-        local status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+        local status_pid
+        status_pid=$(get_gateway_pid)
         if [ -n "$status_pid" ]; then
             echo -e "  ${GREEN}●${NC} 服务状态: ${GREEN}运行中${NC} (PID: $status_pid)"
         else
@@ -891,7 +1392,9 @@ show_status() {
         
         # 显示 OpenClaw 模型配置
         if check_openclaw_installed; then
-            local default_model=$(openclaw config get models.default 2>/dev/null || echo "未配置")
+            local default_model
+            default_model="$(get_current_model_ref || true)"
+            [ -z "$default_model" ] && default_model="未配置"
             echo -e "    • 默认模型: ${WHITE}$default_model${NC}"
         fi
         
@@ -929,6 +1432,17 @@ config_ai_model() {
     echo -e "${WHITE}🤖 AI 模型配置${NC}"
     print_divider
     echo ""
+
+    echo -e "${CYAN}推荐优先使用官方向导（模型列表与参数始终最新）${NC}"
+    if confirm "是否启动官方向导 openclaw onboard？" "y"; then
+        if run_official_model_onboard; then
+            log_info "官方模型配置完成。"
+            press_enter
+            return
+        fi
+        log_warn "官方向导执行失败，继续使用本地兼容配置菜单。"
+        echo ""
+    fi
     
     echo -e "${CYAN}选择 AI 提供商:${NC}"
     echo -e "${GRAY}提示: 支持自定义 API 地址（通过自定义 Provider 配置）${NC}"
@@ -1057,7 +1571,7 @@ config_anthropic() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1074,10 +1588,10 @@ config_anthropic() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "Claude Sonnet 4.5 (推荐)" "⭐"
-    print_menu_item "2" "Claude Opus 4.5 (最强)" "👑"
+    print_menu_item "1" "Claude Sonnet 4.6 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "Claude Opus 4.6 (最强)" "👑"
     print_menu_item "3" "Claude 4.5 Haiku (快速)" "⚡"
-    print_menu_item "4" "Claude 4 Sonnet (上一代)" "📦"
+    print_menu_item "4" "Claude Sonnet 4.5 (兼容)" "📦"
     print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
@@ -1085,12 +1599,12 @@ config_anthropic() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="claude-sonnet-4-5-20250929" ;;
-        2) model="claude-opus-4-5-20251101" ;;
-        3) model="claude-haiku-4-5-20251001" ;;
-        4) model="claude-sonnet-4-20250514" ;;
+        1) model="claude-sonnet-4-6" ;;
+        2) model="claude-opus-4-6" ;;
+        3) model="claude-haiku-4-5" ;;
+        4) model="claude-sonnet-4-5" ;;
         5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="claude-sonnet-4-5-20250929" ;;
+        *) model="claude-sonnet-4-6" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -1173,7 +1687,7 @@ config_openai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1190,11 +1704,11 @@ config_openai() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "GPT-5 (推荐)" "⭐"
-    print_menu_item "2" "GPT-5-mini (经济)" "⚡"
-    print_menu_item "3" "GPT-4o" "🚀"
-    print_menu_item "4" "GPT-4o-mini" "💰"
-    print_menu_item "5" "o1-preview (推理)" "🧠"
+    print_menu_item "1" "GPT-5.1-Codex (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "GPT-5.4 (最新通用)" "🚀"
+    print_menu_item "3" "GPT-5.1" "⚡"
+    print_menu_item "4" "GPT-5.1-Codex-Mini (经济)" "💰"
+    print_menu_item "5" "GPT-4.1 (兼容)" "🧠"
     print_menu_item "6" "自定义模型名称" "✏️"
     echo ""
     
@@ -1202,13 +1716,13 @@ config_openai() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gpt-5" ;;
-        2) model="gpt-5-mini" ;;
-        3) model="gpt-4o" ;;
-        4) model="gpt-4o-mini" ;;
-        5) model="o1-preview" ;;
+        1) model="gpt-5.1-codex" ;;
+        2) model="gpt-5.4" ;;
+        3) model="gpt-5.1" ;;
+        4) model="gpt-5.1-codex-mini" ;;
+        5) model="gpt-4.1" ;;
         6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gpt-5" ;;
+        *) model="gpt-5.1-codex" ;;
     esac
     
     # 如果使用自定义 API 地址，询问 API 类型
@@ -1312,7 +1826,7 @@ config_deepseek() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1374,7 +1888,7 @@ config_kimi() {
     # 获取当前配置
     local current_key=$(get_env_value "MOONSHOT_API_KEY")
     local current_url=$(get_env_value "MOONSHOT_BASE_URL")
-    local official_url="https://api.moonshot.cn/v1"
+    local official_url="https://api.moonshot.ai/v1"
     
     # 显示当前配置
     echo -e "${CYAN}Kimi 是月之暗面（Moonshot AI）推出的大语言模型${NC}"
@@ -1393,7 +1907,8 @@ config_kimi() {
     fi
     echo ""
     
-    echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
+    echo -e "${CYAN}官方 API: ${WHITE}https://api.moonshot.ai/v1${NC}"
+    echo -e "${CYAN}国内 API: ${WHITE}https://api.moonshot.cn/v1${NC}"
     echo -e "${GRAY}获取 Key: https://platform.moonshot.cn/${NC}"
     echo ""
     print_divider
@@ -1413,8 +1928,17 @@ config_kimi() {
     if [ "$config_mode" = "2" ]; then
         echo ""
         echo -e "${CYAN}API 地址配置:${NC}"
+        print_menu_item "1" "国际版 API (api.moonshot.ai)" "🌍"
+        print_menu_item "2" "国内版 API (api.moonshot.cn)" "🇨🇳"
+        read -p "$(echo -e "${YELLOW}区域选择 [1-2] (默认: 1): ${NC}")" moonshot_region < "$TTY_INPUT"
+        if [ "${moonshot_region:-1}" = "2" ]; then
+            base_url="https://api.moonshot.cn/v1"
+        else
+            base_url="https://api.moonshot.ai/v1"
+        fi
+        echo ""
         [ -n "$current_url" ] && echo -e "  当前地址: ${WHITE}$current_url${NC}"
-        echo -e "  官方地址: ${WHITE}$official_url${NC}"
+        echo -e "  建议地址: ${WHITE}$base_url${NC}"
         echo ""
         read -p "$(echo -e "${YELLOW}输入 API 地址 (留空保持当前配置): ${NC}")" input_url < "$TTY_INPUT"
         
@@ -1428,7 +1952,7 @@ config_kimi() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1445,27 +1969,21 @@ config_kimi() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "moonshot-v1-auto (自动, 推荐)" "⭐"
-    print_menu_item "2" "moonshot-v1-8k" "📄"
-    print_menu_item "3" "moonshot-v1-32k" "📑"
-    print_menu_item "4" "moonshot-v1-128k (长文本)" "📚"
-    print_menu_item "5" "自定义模型名称" "✏️"
+    print_menu_item "1" "kimi-k2.5 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-2] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="moonshot-v1-auto" ;;
-        2) model="moonshot-v1-8k" ;;
-        3) model="moonshot-v1-32k" ;;
-        4) model="moonshot-v1-128k" ;;
-        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="moonshot-v1-auto" ;;
+        1) model="kimi-k2.5" ;;
+        2) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="kimi-k2.5" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
-    save_openclaw_ai_config "kimi" "$api_key" "$model" "$base_url"
+    save_openclaw_ai_config "moonshot" "$api_key" "$model" "$base_url"
     
     echo ""
     log_info "Kimi (Moonshot) 配置完成！"
@@ -1475,7 +1993,7 @@ config_kimi() {
     # 询问是否测试
     echo ""
     if confirm "是否测试 API 连接？" "y"; then
-        test_ai_connection "kimi" "$api_key" "$model" "$base_url"
+        test_ai_connection "moonshot" "$api_key" "$model" "$base_url"
     fi
     
     press_enter
@@ -1580,9 +2098,9 @@ config_openrouter() {
     print_divider
     echo ""
     
-    # 获取当前配置 (OpenRouter 使用 OPENAI 环境变量)
-    local current_key=$(get_env_value "OPENAI_API_KEY")
-    local current_url=$(get_env_value "OPENAI_BASE_URL")
+    # 获取当前配置
+    local current_key=$(get_env_value "OPENROUTER_API_KEY")
+    local current_url=$(get_env_value "OPENROUTER_BASE_URL")
     local official_url="https://openrouter.ai/api/v1"
     
     # 显示当前配置
@@ -1637,7 +2155,7 @@ config_openrouter() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1654,10 +2172,10 @@ config_openrouter() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "anthropic/claude-sonnet-4 (推荐)" "🟣"
-    print_menu_item "2" "openai/gpt-4o" "🟢"
-    print_menu_item "3" "google/gemini-pro-1.5" "🔴"
-    print_menu_item "4" "meta-llama/llama-3-70b" "🦙"
+    print_menu_item "1" "auto (推荐, 官方默认)" "🧭"
+    print_menu_item "2" "anthropic/claude-opus-4.6" "🟣"
+    print_menu_item "3" "openai/gpt-5.1-codex" "🟢"
+    print_menu_item "4" "google/gemini-3.1-pro-preview" "🔴"
     print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
@@ -1665,12 +2183,12 @@ config_openrouter() {
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="anthropic/claude-sonnet-4" ;;
-        2) model="openai/gpt-4o" ;;
-        3) model="google/gemini-pro-1.5" ;;
-        4) model="meta-llama/llama-3-70b-instruct" ;;
+        1) model="auto" ;;
+        2) model="anthropic/claude-opus-4.6" ;;
+        3) model="openai/gpt-5.1-codex" ;;
+        4) model="google/gemini-3.1-pro-preview" ;;
         5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="anthropic/claude-sonnet-4" ;;
+        *) model="auto" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -1719,7 +2237,7 @@ config_google_gemini() {
     echo ""
     
     echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
-    echo -e "${GRAY}获取 Key: https://makersuite.google.com/app/apikey${NC}"
+    echo -e "${GRAY}获取 Key: https://aistudio.google.com/apikey${NC}"
     echo ""
     print_divider
     echo ""
@@ -1753,7 +2271,7 @@ config_google_gemini() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -1770,21 +2288,23 @@ config_google_gemini() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "gemini-2.0-flash (推荐)" "⭐"
-    print_menu_item "2" "gemini-1.5-pro" "🚀"
-    print_menu_item "3" "gemini-1.5-flash" "⚡"
-    print_menu_item "4" "自定义模型名称" "✏️"
+    print_menu_item "1" "gemini-3.1-pro-preview (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "gemini-3-flash-preview" "🚀"
+    print_menu_item "3" "gemini-2.5-pro" "📦"
+    print_menu_item "4" "gemini-2.5-flash" "⚡"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gemini-2.0-flash" ;;
-        2) model="gemini-1.5-pro" ;;
-        3) model="gemini-1.5-flash" ;;
-        4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gemini-2.0-flash" ;;
+        1) model="gemini-3.1-pro-preview" ;;
+        2) model="gemini-3-flash-preview" ;;
+        3) model="gemini-2.5-pro" ;;
+        4) model="gemini-2.5-flash" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="gemini-3.1-pro-preview" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -1819,7 +2339,7 @@ config_azure_openai() {
     echo ""
     
     read -p "$(echo -e "${YELLOW}输入 Azure 端点 URL: ${NC}")" azure_endpoint
-    read -p "$(echo -e "${YELLOW}输入 API Key: ${NC}")" api_key
+    read_secret_input "${YELLOW}输入 API Key: ${NC}" api_key
     read -p "$(echo -e "${YELLOW}输入部署名称 (Deployment Name): ${NC}")" deployment_name
     read -p "$(echo -e "${YELLOW}API 版本 (默认: 2024-02-15-preview): ${NC}")" api_version
     api_version=${api_version:-"2024-02-15-preview"}
@@ -1902,7 +2422,7 @@ config_groq() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2018,7 +2538,7 @@ config_mistral() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2116,7 +2636,7 @@ config_xai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2133,25 +2653,19 @@ config_xai() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "grok-4-fast (推荐，最新)" "⭐"
-    print_menu_item "2" "grok-4 (最强)" "👑"
-    print_menu_item "3" "grok-3-fast (快速)" "⚡"
-    print_menu_item "4" "grok-3-mini-fast (轻量)" "🪶"
-    print_menu_item "5" "grok-2-vision (视觉)" "👁️"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "1" "grok-4 (推荐, 官方默认)" "⭐"
+    print_menu_item "2" "grok-4-fast" "⚡"
+    print_menu_item "3" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-3] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="grok-4-fast" ;;
-        2) model="grok-4" ;;
-        3) model="grok-3-fast-latest" ;;
-        4) model="grok-3-mini-fast-latest" ;;
-        5) model="grok-2-vision-latest" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="grok-4-fast" ;;
+        1) model="grok-4" ;;
+        2) model="grok-4-fast" ;;
+        3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="grok-4" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2217,7 +2731,7 @@ config_zai() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2234,25 +2748,23 @@ config_zai() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "glm-4.7 (推荐，最新)" "⭐"
-    print_menu_item "2" "glm-4.6 (上一代)" "📦"
-    print_menu_item "3" "glm-4.6v (视觉)" "👁️"
-    print_menu_item "4" "glm-4.5-flash (快速)" "⚡"
-    print_menu_item "5" "glm-4.5-air (轻量)" "🪶"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "1" "glm-5 (推荐，最新)" "⭐"
+    print_menu_item "2" "glm-4.7" "📦"
+    print_menu_item "3" "glm-4.7-flash" "⚡"
+    print_menu_item "4" "glm-4.7-flashx" "🔥"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="glm-4.7" ;;
-        2) model="glm-4.6" ;;
-        3) model="glm-4.6v" ;;
-        4) model="glm-4.5-flash" ;;
-        5) model="glm-4.5-air" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="glm-4.7" ;;
+        1) model="glm-5" ;;
+        2) model="glm-4.7" ;;
+        3) model="glm-4.7-flash" ;;
+        4) model="glm-4.7-flashx" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="glm-5" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2332,7 +2844,7 @@ config_minimax() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2349,19 +2861,23 @@ config_minimax() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "MiniMax-M2.1 (推荐，最新)" "⭐"
-    print_menu_item "2" "MiniMax-M2 (上一代)" "📦"
-    print_menu_item "3" "自定义模型名称" "✏️"
+    print_menu_item "1" "MiniMax-M2.7 (推荐，最新旗舰)" "⭐"
+    print_menu_item "2" "MiniMax-M2.7-highspeed (高速版)" "⚡"
+    print_menu_item "3" "MiniMax-M2.5" "🔹"
+    print_menu_item "4" "MiniMax-M2.5-highspeed" "🔹"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
-    
-    read -p "$(echo -e "${YELLOW}请选择 [1-3] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
-    
+
     case $model_choice in
-        1) model="MiniMax-M2.1" ;;
-        2) model="MiniMax-M2" ;;
-        3) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="MiniMax-M2.1" ;;
+        1) model="MiniMax-M2.7" ;;
+        2) model="MiniMax-M2.7-highspeed" ;;
+        3) model="MiniMax-M2.5" ;;
+        4) model="MiniMax-M2.5-highspeed" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="MiniMax-M2.7" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2391,7 +2907,7 @@ config_opencode() {
     
     # 获取当前配置
     local current_key=$(get_env_value "OPENCODE_API_KEY")
-    local official_url="https://api.opencode.ai/v1"
+    local official_url="https://opencode.ai/zen/v1"
     
     # 显示当前配置
     echo -e "${CYAN}OpenCode 是一个免费的多模型 API 网关${NC}"
@@ -2408,7 +2924,7 @@ config_opencode() {
     echo ""
     
     echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
-    echo -e "${GRAY}获取 Key: https://opencode.ai/${NC}"
+    echo -e "${GRAY}获取 Key: https://opencode.ai/auth${NC}"
     echo ""
     print_divider
     echo ""
@@ -2430,7 +2946,7 @@ config_opencode() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2445,42 +2961,71 @@ config_opencode() {
     fi
     
     echo ""
+    echo -e "${CYAN}选择目录:${NC}"
+    print_menu_item "1" "Zen 目录 (Claude/GPT/Gemini)" "🧘"
+    print_menu_item "2" "Go 目录 (Kimi/GLM/MiniMax)" "🏃"
+    echo ""
+    read -p "$(echo -e "${YELLOW}请选择 [1-2] (默认: 1): ${NC}")" catalog_choice < "$TTY_INPUT"
+    catalog_choice=${catalog_choice:-1}
+
+    local provider="opencode"
+    if [ "$catalog_choice" = "2" ]; then
+        provider="opencode-go"
+    fi
+
+    echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "claude-sonnet-4-5 (推荐)" "⭐"
-    print_menu_item "2" "claude-opus-4-5 (最强)" "👑"
-    print_menu_item "3" "gpt-5 (GPT-5)" "🟢"
-    print_menu_item "4" "gemini-3-pro (Gemini 3)" "🔴"
-    print_menu_item "5" "glm-4.7-free (免费)" "🆓"
-    print_menu_item "6" "gpt-5-codex (代码)" "💻"
-    print_menu_item "7" "自定义模型名称" "✏️"
-    echo ""
-    
-    read -p "$(echo -e "${YELLOW}请选择 [1-7] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
-    model_choice=${model_choice:-1}
-    
-    case $model_choice in
-        1) model="claude-sonnet-4-5" ;;
-        2) model="claude-opus-4-5" ;;
-        3) model="gpt-5" ;;
-        4) model="gemini-3-pro" ;;
-        5) model="glm-4.7-free" ;;
-        6) model="gpt-5-codex" ;;
-        7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="claude-sonnet-4-5" ;;
-    esac
+    if [ "$provider" = "opencode-go" ]; then
+        print_menu_item "1" "kimi-k2.5 (推荐, Go 默认)" "⭐"
+        print_menu_item "2" "glm-5" "🇨🇳"
+        print_menu_item "3" "minimax-m2.5" "🤖"
+        print_menu_item "4" "自定义模型名称" "✏️"
+        echo ""
+        read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+        model_choice=${model_choice:-1}
+        case $model_choice in
+            1) model="kimi-k2.5" ;;
+            2) model="glm-5" ;;
+            3) model="minimax-m2.5" ;;
+            4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+            *) model="kimi-k2.5" ;;
+        esac
+    else
+        print_menu_item "1" "claude-opus-4-6 (推荐, Zen 默认)" "⭐"
+        print_menu_item "2" "gpt-5.1-codex" "💻"
+        print_menu_item "3" "gpt-5.2" "🟢"
+        print_menu_item "4" "gemini-3-pro (Gemini 3)" "🔴"
+        print_menu_item "5" "glm-4.7 (免费)" "🆓"
+        print_menu_item "6" "gpt-5.1-codex-mini" "⚡"
+        print_menu_item "7" "自定义模型名称" "✏️"
+        echo ""
+        read -p "$(echo -e "${YELLOW}请选择 [1-7] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+        model_choice=${model_choice:-1}
+        case $model_choice in
+            1) model="claude-opus-4-6" ;;
+            2) model="gpt-5.1-codex" ;;
+            3) model="gpt-5.2" ;;
+            4) model="gemini-3-pro" ;;
+            5) model="glm-4.7" ;;
+            6) model="gpt-5.1-codex-mini" ;;
+            7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+            *) model="claude-opus-4-6" ;;
+        esac
+    fi
     
     # 保存到 OpenClaw 环境变量配置
-    save_openclaw_ai_config "opencode" "$api_key" "$model" ""
+    save_openclaw_ai_config "$provider" "$api_key" "$model" ""
     
     echo ""
     log_info "OpenCode 配置完成！"
+    log_info "目录: $provider"
     log_info "模型: $model"
     
     # 询问是否测试
     echo ""
     if confirm "是否测试 API 连接？" "y"; then
-        test_ai_connection "opencode" "$api_key" "$model" ""
+        test_ai_connection "$provider" "$api_key" "$model" ""
     fi
     
     press_enter
@@ -2631,7 +3176,7 @@ config_google_gemini_cli() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2648,25 +3193,23 @@ config_google_gemini_cli() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "gemini-3-pro-preview (推荐)" "⭐"
+    print_menu_item "1" "gemini-3.1-pro-preview (推荐)" "⭐"
     print_menu_item "2" "gemini-3-flash-preview (快速)" "⚡"
-    print_menu_item "3" "gemini-2.5-pro (稳定)" "📦"
-    print_menu_item "4" "gemini-2.5-flash (快速稳定)" "🚀"
-    print_menu_item "5" "gemini-2.0-flash" "⚡"
-    print_menu_item "6" "自定义模型名称" "✏️"
+    print_menu_item "3" "gemini-3.1-flash-lite-preview (轻量)" "🚀"
+    print_menu_item "4" "gemini-2.5-pro (稳定)" "📦"
+    print_menu_item "5" "自定义模型名称" "✏️"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}请选择 [1-6] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}请选择 [1-5] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
     
     case $model_choice in
-        1) model="gemini-3-pro-preview" ;;
+        1) model="gemini-3.1-pro-preview" ;;
         2) model="gemini-3-flash-preview" ;;
-        3) model="gemini-2.5-pro" ;;
-        4) model="gemini-2.5-flash" ;;
-        5) model="gemini-2.0-flash" ;;
-        6) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="gemini-3-pro-preview" ;;
+        3) model="gemini-3.1-flash-lite-preview" ;;
+        4) model="gemini-2.5-pro" ;;
+        5) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="gemini-3.1-pro-preview" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -2732,7 +3275,7 @@ config_google_antigravity() {
             echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
         fi
         
-        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+        read_secret_input "${YELLOW}输入 API Key (留空保持不变): ${NC}" input_key
         
         if [ -n "$input_key" ]; then
             api_key="$input_key"
@@ -2752,8 +3295,8 @@ config_google_antigravity() {
     print_menu_item "1" "gemini-3-pro-high (推荐)" "⭐"
     print_menu_item "2" "gemini-3-pro-low (快速)" "⚡"
     print_menu_item "3" "gemini-3-flash (闪电)" "🔥"
-    print_menu_item "4" "claude-sonnet-4-5 (Claude)" "🟣"
-    print_menu_item "5" "claude-opus-4-5-thinking (思考)" "🧠"
+    print_menu_item "4" "claude-opus-4-6-thinking (Claude)" "🟣"
+    print_menu_item "5" "claude-sonnet-4-6-thinking (思考)" "🧠"
     print_menu_item "6" "gpt-oss-120b-medium (GPT)" "🟢"
     print_menu_item "7" "自定义模型名称" "✏️"
     echo ""
@@ -2765,8 +3308,8 @@ config_google_antigravity() {
         1) model="gemini-3-pro-high" ;;
         2) model="gemini-3-pro-low" ;;
         3) model="gemini-3-flash" ;;
-        4) model="claude-sonnet-4-5" ;;
-        5) model="claude-opus-4-5-thinking" ;;
+        4) model="claude-opus-4-6-thinking" ;;
+        5) model="claude-sonnet-4-6-thinking" ;;
         6) model="gpt-oss-120b-medium" ;;
         7) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
         *) model="gemini-3-pro-high" ;;
@@ -2797,18 +3340,31 @@ config_channels() {
     echo -e "${WHITE}📱 消息渠道配置${NC}"
     print_divider
     echo ""
+    echo -e "${GRAY}详细文档: ~/.openclaw/docs/channels-configuration-guide.md${NC}"
+    echo ""
     
     print_menu_item "1" "Telegram 机器人" "📨"
     print_menu_item "2" "Discord 机器人" "🎮"
     print_menu_item "3" "WhatsApp" "💬"
     print_menu_item "4" "Slack" "💼"
-    print_menu_item "5" "微信 (WeChat)" "🟢"
-    print_menu_item "6" "iMessage" "🍎"
-    print_menu_item "7" "飞书 (Feishu)" "🔷"
+    print_menu_item "5" "飞书 (Feishu)" "🔷"
+    print_menu_item "6" "Signal（官方）" "🔐"
+    print_menu_item "7" "Microsoft Teams（官方插件）" "🏢"
+    print_menu_item "8" "Mattermost（官方插件）" "🧩"
+    print_menu_item "9" "Google Chat（官方插件）" "🟨"
+    print_menu_item "10" "Matrix（官方插件）" "🔷"
+    print_menu_item "11" "LINE（官方插件）" "🟩"
+    print_menu_item "12" "Nextcloud Talk（官方插件）" "☁️"
+    print_menu_item "13" "更多官方渠道" "🧭"
+    print_menu_item "14" "钉钉/QQ/企业微信 官方状态检查" "🧾"
+    print_menu_item "15" "微信（LangBot WeChatPad，社区）" "🟢"
+    print_menu_item "16" "iMessage（旧版）" "🍎"
+    print_menu_item "17" "QQ（社区插件，可选）" "🐧"
+    print_menu_item "18" "企业微信（WeCom，社区插件）" "🏬"
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    echo -en "${YELLOW}请选择 [0-7]: ${NC}"
+    echo -en "${YELLOW}请选择 [0-18]: ${NC}"
     read choice < "$TTY_INPUT"
     
     case $choice in
@@ -2816,9 +3372,20 @@ config_channels() {
         2) config_discord ;;
         3) config_whatsapp ;;
         4) config_slack ;;
-        5) config_wechat ;;
-        6) config_imessage ;;
-        7) config_feishu ;;
+        5) config_feishu ;;
+        6) config_signal ;;
+        7) config_msteams ;;
+        8) config_mattermost ;;
+        9) config_googlechat ;;
+        10) config_matrix ;;
+        11) config_line ;;
+        12) config_nextcloud_talk ;;
+        13) config_more_official_channels ;;
+        14) check_cn_enterprise_channel_official_status ;;
+        15) config_wechat ;;
+        16) config_imessage ;;
+        17) config_qq_community ;;
+        18) config_wecom_community ;;
         0) return ;;
         *) log_error "无效选择"; press_enter; config_channels ;;
     esac
@@ -3057,7 +3624,7 @@ config_slack() {
     print_divider
     echo ""
     
-    read -p "$(echo -e "${YELLOW}输入 Bot Token (xoxb-...): ${NC}")" bot_token
+    read_secret_input "${YELLOW}输入 Bot Token (xoxb-...): ${NC}" bot_token
     read -p "$(echo -e "${YELLOW}输入 App Token (xapp-...): ${NC}")" app_token
     
     if [ -n "$bot_token" ] && [ -n "$app_token" ]; then
@@ -3107,55 +3674,863 @@ config_slack() {
     press_enter
 }
 
-config_wechat() {
+get_official_channel_package() {
+    local channel="$1"
+    case "$channel" in
+        signal) echo "@openclaw/signal" ;;
+        msteams) echo "@openclaw/msteams" ;;
+        mattermost) echo "@openclaw/mattermost" ;;
+        googlechat) echo "@openclaw/googlechat" ;;
+        matrix) echo "@openclaw/matrix" ;;
+        line) echo "@openclaw/line" ;;
+        nextcloud-talk) echo "@openclaw/nextcloud-talk" ;;
+        irc) echo "@openclaw/irc" ;;
+        twitch) echo "@openclaw/twitch" ;;
+        zalo) echo "@openclaw/zalo" ;;
+        zalouser) echo "@openclaw/zalouser" ;;
+        nostr) echo "@openclaw/nostr" ;;
+        tlon) echo "@openclaw/tlon" ;;
+        synology-chat) echo "@openclaw/synology-chat" ;;
+        bluebubbles) echo "@openclaw/bluebubbles" ;;
+        *) echo "" ;;
+    esac
+}
+
+config_official_plugin_channel() {
+    local channel="$1"
+    local display_name="$2"
+
     clear_screen
     print_header
-    
-    echo -e "${WHITE}🟢 配置微信${NC}"
+    echo -e "${WHITE}🔌 配置 ${display_name}${NC}"
     print_divider
     echo ""
-    
-    echo -e "${YELLOW}⚠️ 注意: 微信接入需要第三方工具支持${NC}"
-    echo ""
-    
+
     if ! check_openclaw_installed; then
         log_error "OpenClaw 未安装"
         press_enter
         return
     fi
-    
-    echo -e "${CYAN}微信接入方案:${NC}"
-    echo "  • OpenClaw 可能通过插件支持微信"
-    echo "  • 请查看 OpenClaw 文档了解详情"
+
+    ensure_openclaw_init
+
+    local pkg
+    pkg="$(get_official_channel_package "$channel")"
+    if [ -z "$pkg" ]; then
+        log_error "未找到 ${display_name} 对应的官方插件包映射"
+        press_enter
+        return
+    fi
+
+    echo -e "${CYAN}该渠道使用官方插件: ${WHITE}${pkg}${NC}"
+    echo -e "${CYAN}将执行: 安装插件 -> 启用插件 -> 渠道配置向导${NC}"
     echo ""
-    
-    # 检查是否有微信相关插件
-    echo -e "${YELLOW}检查可用插件...${NC}"
-    local plugins=$(openclaw plugins list 2>/dev/null | grep -i wechat || echo "")
-    
-    if [ -n "$plugins" ]; then
+
+    if confirm "是否安装/更新官方插件 ${pkg}？" "y"; then
+        if openclaw plugins install "$pkg" --pin; then
+            log_info "官方插件安装成功: $pkg"
+        else
+            log_warn "插件安装失败，继续尝试使用已安装版本配置渠道"
+        fi
+    fi
+
+    openclaw plugins enable "$channel" 2>/dev/null || true
+    ensure_plugin_in_allow "$channel"
+
+    echo ""
+    log_info "启动渠道配置向导..."
+    if openclaw channels add --channel "$channel"; then
+        log_info "${display_name} 渠道配置成功！"
+    else
+        log_warn "${display_name} 渠道向导未成功完成，可稍后重试。"
+        echo -e "${CYAN}手动命令:${NC} ${WHITE}openclaw channels add --channel ${channel}${NC}"
+    fi
+
+    echo ""
+    if confirm "是否重启 Gateway 使配置生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+
+    press_enter
+}
+
+config_signal() { config_official_plugin_channel "signal" "Signal（官方）"; }
+config_msteams() { config_official_plugin_channel "msteams" "Microsoft Teams（官方插件）"; }
+config_mattermost() { config_official_plugin_channel "mattermost" "Mattermost（官方插件）"; }
+config_googlechat() { config_official_plugin_channel "googlechat" "Google Chat（官方插件）"; }
+config_matrix() { config_official_plugin_channel "matrix" "Matrix（官方插件）"; }
+config_line() { config_official_plugin_channel "line" "LINE（官方插件）"; }
+config_nextcloud_talk() { config_official_plugin_channel "nextcloud-talk" "Nextcloud Talk（官方插件）"; }
+
+config_more_official_channels() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🧭 更多官方渠道${NC}"
+    print_divider
+    echo ""
+    print_menu_item "1" "IRC（官方插件）" "💻"
+    print_menu_item "2" "Twitch（官方插件）" "🟣"
+    print_menu_item "3" "Zalo（官方插件）" "🇻🇳"
+    print_menu_item "4" "Zalo Personal（官方插件）" "📱"
+    print_menu_item "5" "Nostr（官方插件）" "🌐"
+    print_menu_item "6" "Tlon（官方插件）" "🪐"
+    print_menu_item "7" "Synology Chat（官方插件）" "🗄️"
+    print_menu_item "8" "BlueBubbles（官方）" "🔵"
+    print_menu_item "0" "返回" "↩️"
+    echo ""
+    echo -en "${YELLOW}请选择 [0-8]: ${NC}"
+    read choice < "$TTY_INPUT"
+    case $choice in
+        1) config_official_plugin_channel "irc" "IRC（官方插件）" ;;
+        2) config_official_plugin_channel "twitch" "Twitch（官方插件）" ;;
+        3) config_official_plugin_channel "zalo" "Zalo（官方插件）" ;;
+        4) config_official_plugin_channel "zalouser" "Zalo Personal（官方插件）" ;;
+        5) config_official_plugin_channel "nostr" "Nostr（官方插件）" ;;
+        6) config_official_plugin_channel "tlon" "Tlon（官方插件）" ;;
+        7) config_official_plugin_channel "synology-chat" "Synology Chat（官方插件）" ;;
+        8) config_official_plugin_channel "bluebubbles" "BlueBubbles（官方）" ;;
+        0) return ;;
+        *) log_error "无效选择"; press_enter; config_more_official_channels ;;
+    esac
+}
+
+check_cn_enterprise_channel_official_status() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🧾 国内企业渠道官方适配检查${NC}"
+    print_divider
+    echo ""
+    echo -e "${CYAN}对照基线: 官方扩展目录 + 官方 channels 文档（最新版）${NC}"
+    echo ""
+    echo -e "  • 钉钉（DingTalk）: ${YELLOW}当前未发现官方插件${NC}"
+    echo -e "  • QQ: ${YELLOW}当前未发现官方插件${NC}"
+    echo -e "  • 企业微信（WeCom）: ${YELLOW}当前未发现官方插件${NC}"
+    echo ""
+    echo -e "${CYAN}可选社区方案（非官方，需自行评估风险）:${NC}"
+    echo "  • QQ: @sliverp/qqbot（本菜单提供安装/探针/回滚）"
+    echo "  • 微信: openclaw-wechat-channel（按 LangBot WeChatPad 适配流程）"
+    echo "  • 企业微信: @marshulll/openclaw-wecom（本菜单提供安装/探针/回滚）"
+    echo ""
+    echo -e "${CYAN}已纳入的官方企业渠道替代项:${NC}"
+    echo "  • 飞书（Feishu）"
+    echo "  • Microsoft Teams（插件）"
+    echo "  • Slack"
+    echo "  • Google Chat（插件）"
+    echo "  • Mattermost（插件）"
+    echo ""
+    echo -e "${YELLOW}说明:${NC} 为避免与官方能力漂移，本安装器仅默认纳入已发布的官方渠道插件。"
+    echo -e "${YELLOW}补充:${NC} 企业微信/QQ/微信目前按社区插件方案接入。"
+    echo ""
+    press_enter
+}
+
+probe_wecom_community_config() {
+    echo ""
+    echo -e "${CYAN}━━━ WeCom 社区插件探针 ━━━${NC}"
+    echo ""
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法探针"
+        return 1
+    fi
+
+    local plugin_ok=false
+    local channel_ok=false
+    local mode=""
+    local bot_token=""
+    local app_corp=""
+
+    if openclaw plugins list 2>/dev/null | grep -Eqi "openclaw-wecom|wecom"; then
+        plugin_ok=true
+        log_info "WeCom 插件已安装"
+    else
+        log_warn "未检测到 WeCom 插件"
+    fi
+
+    if openclaw channels list 2>/dev/null | grep -qi "wecom"; then
+        channel_ok=true
+        log_info "WeCom 渠道已注册"
+    else
+        log_warn "WeCom 渠道未在 channels list 中出现"
+    fi
+
+    mode="$(openclaw config get channels.wecom.mode 2>/dev/null || true)"
+    [ -z "$mode" ] || [ "$mode" = "undefined" ] && mode="both"
+    echo -e "${CYAN}当前模式:${NC} ${WHITE}${mode}${NC}"
+
+    bot_token="$(openclaw config get channels.wecom.accounts.bot.token 2>/dev/null || true)"
+    app_corp="$(openclaw config get channels.wecom.accounts.app.corpId 2>/dev/null || true)"
+    if [ "$mode" = "bot" ] || [ "$mode" = "both" ]; then
+        if [ -n "$bot_token" ] && [ "$bot_token" != "undefined" ]; then
+            log_info "Bot 模式关键字段已配置"
+        else
+            log_warn "Bot 模式 token 未配置"
+        fi
+    fi
+    if [ "$mode" = "app" ] || [ "$mode" = "both" ]; then
+        if [ -n "$app_corp" ] && [ "$app_corp" != "undefined" ]; then
+            log_info "App 模式关键字段已配置"
+        else
+            log_warn "App 模式 corpId 未配置"
+        fi
+    fi
+
+    echo ""
+    echo -e "${CYAN}诊断输出:${NC}"
+    openclaw doctor 2>&1 | head -10 | sed 's/^/  /'
+
+    if [ "$plugin_ok" = true ] && [ "$channel_ok" = true ]; then
+        log_info "WeCom 配置探针通过"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}排障建议:${NC}"
+    echo "  1) openclaw doctor --fix"
+    echo "  2) openclaw plugins update --all"
+    echo "  3) 重新执行企业微信配置向导"
+    return 1
+}
+
+rollback_wecom_community_config() {
+    echo ""
+    echo -e "${WHITE}♻️ 回滚企业微信（WeCom）社区配置${NC}"
+    print_divider
+    echo ""
+    echo -e "${YELLOW}将执行:${NC}"
+    echo "  • 禁用并卸载 WeCom 社区插件"
+    echo "  • 清理 channels.wecom 与 plugins.allow 残留"
+    echo ""
+
+    if ! confirm "确认执行回滚？" "n"; then
+        log_info "已取消回滚"
+        return 0
+    fi
+
+    openclaw plugins disable wecom > /dev/null 2>&1 || true
+    openclaw plugins disable openclaw-wecom > /dev/null 2>&1 || true
+    openclaw plugins uninstall wecom --keep-files > /dev/null 2>&1 || true
+    openclaw plugins uninstall openclaw-wecom --keep-files > /dev/null 2>&1 || true
+    openclaw plugins uninstall "$WECOM_PLUGIN_COMMUNITY" --keep-files > /dev/null 2>&1 || true
+
+    if openclaw config --help 2>/dev/null | grep -q "unset"; then
+        openclaw config unset channels.wecom > /dev/null 2>&1 || true
+        openclaw config unset plugins.entries.wecom > /dev/null 2>&1 || true
+        openclaw config unset plugins.entries.openclaw-wecom > /dev/null 2>&1 || true
+    else
+        openclaw config set channels.wecom.enabled false > /dev/null 2>&1 || true
+    fi
+
+    remove_plugin_from_allow "wecom" || true
+    remove_plugin_from_allow "openclaw-wecom" || true
+
+    log_info "企业微信配置回滚完成"
+    if confirm "是否重启 Gateway 使回滚生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+    return 0
+}
+
+config_wecom_community_setup() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+
+    ensure_openclaw_init
+
+    local plugin_version="${OPENCLAW_WECOM_PLUGIN_VERSION:-$WECOM_PLUGIN_VERSION_DEFAULT}"
+    local plugin_spec="${WECOM_PLUGIN_COMMUNITY}@${plugin_version}"
+    local mode_choice mode
+    local default_account
+
+    local bot_webhook="$WECOM_WEBHOOK_BOT_DEFAULT"
+    local bot_token=""
+    local bot_aes=""
+    local bot_receive_id=""
+
+    local app_webhook="$WECOM_WEBHOOK_APP_DEFAULT"
+    local corp_id=""
+    local corp_secret=""
+    local agent_id=""
+    local callback_token=""
+    local callback_aes=""
+
+    echo -e "${YELLOW}⚠️ 风险提示:${NC}"
+    echo "  • 企业微信当前不是 OpenClaw 官方渠道，依赖社区插件"
+    echo "  • 插件固定版本安装，降低升级漂移风险"
+    echo ""
+    echo -e "${CYAN}将安装:${NC} ${WHITE}${plugin_spec}${NC}"
+    if ! confirm "继续安装并配置企业微信插件？" "n"; then
+        log_info "已取消企业微信配置"
+        return 0
+    fi
+
+    if openclaw plugins install "$plugin_spec" --pin; then
+        log_info "企业微信插件安装成功"
+    else
+        log_warn "插件安装失败，尝试继续使用已安装版本"
+        if ! openclaw plugins list 2>/dev/null | grep -Eqi "openclaw-wecom|wecom"; then
+            log_error "未检测到企业微信插件，无法继续"
+            return 1
+        fi
+    fi
+
+    openclaw plugins enable wecom > /dev/null 2>&1 || openclaw plugins enable openclaw-wecom > /dev/null 2>&1 || true
+    ensure_plugin_in_allow "wecom"
+    ensure_plugin_in_allow "openclaw-wecom"
+    openclaw channels add --channel wecom > /dev/null 2>&1 || true
+
+    echo ""
+    echo -e "${CYAN}选择企业微信接入模式:${NC}"
+    print_menu_item "1" "Bot 模式（回调 JSON）" "🤖"
+    print_menu_item "2" "App 模式（内部应用 XML 回调）" "🏢"
+    print_menu_item "3" "双模式（推荐）" "🔀"
+    echo ""
+    read_input "${YELLOW}请选择 [1-3] (默认: 3): ${NC}" mode_choice
+    mode_choice="${mode_choice:-3}"
+    case "$mode_choice" in
+        1) mode="bot"; default_account="bot" ;;
+        2) mode="app"; default_account="app" ;;
+        *) mode="both"; default_account="bot" ;;
+    esac
+
+    if [ "$mode" = "bot" ] || [ "$mode" = "both" ]; then
         echo ""
-        echo -e "${CYAN}发现微信相关插件:${NC}"
-        echo "$plugins"
+        echo -e "${CYAN}Bot 模式参数:${NC}"
+        read_input "${YELLOW}Bot webhookPath（默认 ${bot_webhook}）: ${NC}" bot_webhook
+        bot_webhook="${bot_webhook:-$WECOM_WEBHOOK_BOT_DEFAULT}"
+        read_secret_input "${YELLOW}Bot Token: ${NC}" bot_token
+        read_secret_input "${YELLOW}Bot EncodingAESKey: ${NC}" bot_aes
+        read_input "${YELLOW}Bot ReceiveId（aibotid）: ${NC}" bot_receive_id
+        if [ -z "$bot_token" ] || [ -z "$bot_aes" ] || [ -z "$bot_receive_id" ]; then
+            log_error "Bot 模式参数不完整"
+            return 1
+        fi
+    fi
+
+    if [ "$mode" = "app" ] || [ "$mode" = "both" ]; then
         echo ""
-        
-        if confirm "是否启用微信插件？"; then
-            openclaw plugins enable wechat 2>/dev/null || true
-            ensure_plugin_in_allow "wechat"
-            log_info "微信插件已启用"
-            
-            if confirm "是否重启 Gateway？" "y"; then
-                restart_gateway_for_channel
-            fi
+        echo -e "${CYAN}App 模式参数:${NC}"
+        read_input "${YELLOW}App webhookPath（默认 ${app_webhook}）: ${NC}" app_webhook
+        app_webhook="${app_webhook:-$WECOM_WEBHOOK_APP_DEFAULT}"
+        read_input "${YELLOW}CorpID: ${NC}" corp_id
+        read_secret_input "${YELLOW}CorpSecret: ${NC}" corp_secret
+        read_input "${YELLOW}AgentID（数字）: ${NC}" agent_id
+        read_secret_input "${YELLOW}Callback Token: ${NC}" callback_token
+        read_secret_input "${YELLOW}Callback AES Key: ${NC}" callback_aes
+        if [ -z "$corp_id" ] || [ -z "$corp_secret" ] || [ -z "$agent_id" ] || [ -z "$callback_token" ] || [ -z "$callback_aes" ]; then
+            log_error "App 模式参数不完整"
+            return 1
+        fi
+        if ! [[ "$agent_id" =~ ^[0-9]+$ ]]; then
+            log_error "AgentID 必须是数字"
+            return 1
+        fi
+    fi
+
+    openclaw config set channels.wecom.enabled true > /dev/null 2>&1 || true
+    openclaw config set channels.wecom.mode "$mode" > /dev/null 2>&1 || true
+    openclaw config set channels.wecom.defaultAccount "$default_account" > /dev/null 2>&1 || true
+
+    if [ "$mode" = "bot" ] || [ "$mode" = "both" ]; then
+        openclaw config set channels.wecom.accounts.bot.mode bot > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.bot.webhookPath "$bot_webhook" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.bot.token "$bot_token" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.bot.encodingAESKey "$bot_aes" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.bot.receiveId "$bot_receive_id" > /dev/null 2>&1 || true
+    fi
+
+    if [ "$mode" = "app" ] || [ "$mode" = "both" ]; then
+        openclaw config set channels.wecom.accounts.app.mode app > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.webhookPath "$app_webhook" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.corpId "$corp_id" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.corpSecret "$corp_secret" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.agentId "$agent_id" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.callbackToken "$callback_token" > /dev/null 2>&1 || true
+        openclaw config set channels.wecom.accounts.app.callbackAesKey "$callback_aes" > /dev/null 2>&1 || true
+    fi
+
+    log_info "企业微信 WeCom 配置完成"
+    if confirm "是否立即执行 WeCom 配置探针？" "y"; then
+        probe_wecom_community_config || true
+    fi
+    if confirm "是否重启 Gateway 使配置生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+    return 0
+}
+
+config_wecom_community() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🏬 企业微信（WeCom，社区插件）${NC}"
+    print_divider
+    echo ""
+    echo "  1) 安装并配置企业微信插件"
+    echo "  2) 企业微信配置探针"
+    echo "  3) 回滚企业微信配置"
+    echo "  0) 返回"
+    echo ""
+    read_input "${YELLOW}请选择 [0-3]: ${NC}" wecom_choice
+
+    case "$wecom_choice" in
+        1) config_wecom_community_setup ;;
+        2) probe_wecom_community_config ;;
+        3) rollback_wecom_community_config ;;
+        0) return ;;
+        *) log_error "无效选择" ;;
+    esac
+    press_enter
+}
+
+probe_qq_community_config() {
+    echo ""
+    echo -e "${CYAN}━━━ QQ 社区插件探针 ━━━${NC}"
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法探针"
+        return 1
+    fi
+
+    local plugin_ok=false
+    local channel_ok=false
+    local allow_value=""
+
+    if openclaw plugins list 2>/dev/null | grep -qi "qqbot"; then
+        plugin_ok=true
+        log_info "qqbot 插件已安装"
+    else
+        log_warn "qqbot 插件未在 plugins list 中出现"
+    fi
+
+    if openclaw channels list 2>/dev/null | grep -qi "qqbot"; then
+        channel_ok=true
+        log_info "qqbot 渠道已注册"
+    else
+        log_warn "qqbot 渠道未在 channels list 中出现"
+    fi
+
+    allow_value="$(openclaw config get channels.qqbot.allowFrom 2>/dev/null || true)"
+    if [ -n "$allow_value" ] && [ "$allow_value" != "undefined" ]; then
+        echo -e "${CYAN}allowFrom:${NC} ${WHITE}$allow_value${NC}"
+        if echo "$allow_value" | grep -q '\*'; then
+            log_warn "当前 allowFrom 包含 *，表示允许所有来源"
         fi
     else
-        echo ""
-        log_warn "未发现内置微信插件"
-        echo -e "${CYAN}你可以尝试第三方方案:${NC}"
-        echo "  • wechaty: https://wechaty.js.org/"
-        echo "  • itchat: https://github.com/littlecodersh/itchat"
+        log_warn "未检测到 channels.qqbot.allowFrom（插件默认可能为允许全部）"
     fi
-    
+
+    echo ""
+    echo -e "${CYAN}诊断输出:${NC}"
+    if openclaw plugins --help 2>/dev/null | grep -q "doctor"; then
+        openclaw plugins doctor 2>&1 | head -10 | sed 's/^/  /'
+    else
+        openclaw doctor 2>&1 | head -10 | sed 's/^/  /'
+    fi
+
+    if [ "$plugin_ok" = true ] && [ "$channel_ok" = true ]; then
+        log_info "QQ 社区配置探针通过"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}排障建议:${NC}"
+    echo "  1) openclaw doctor --fix"
+    echo "  2) openclaw plugins update --all"
+    echo "  3) 重新执行 QQ 社区配置向导"
+    return 1
+}
+
+rollback_qq_community_config() {
+    echo ""
+    echo -e "${WHITE}♻️ 回滚 QQ 社区配置${NC}"
+    print_divider
+    echo ""
+    echo -e "${YELLOW}将执行:${NC}"
+    echo "  • 禁用 qqbot 插件"
+    echo "  • 卸载 qqbot 插件（保留插件文件）"
+    echo "  • 清理 channels.qqbot 与 plugins.allow 中的 qqbot"
+    echo ""
+
+    if ! confirm "确认执行回滚？" "n"; then
+        log_info "已取消回滚"
+        return 0
+    fi
+
+    openclaw plugins disable qqbot > /dev/null 2>&1 || true
+    openclaw plugins uninstall qqbot --keep-files > /dev/null 2>&1 || true
+
+    if openclaw config --help 2>/dev/null | grep -q "unset"; then
+        openclaw config unset channels.qqbot > /dev/null 2>&1 || true
+        openclaw config unset plugins.entries.qqbot > /dev/null 2>&1 || true
+    else
+        openclaw config set channels.qqbot.enabled false > /dev/null 2>&1 || true
+        openclaw config set channels.qqbot.allowFrom "[]" > /dev/null 2>&1 || true
+    fi
+
+    remove_plugin_from_allow "qqbot" || true
+    log_info "QQ 社区配置回滚完成"
+
+    if confirm "是否重启 Gateway 使回滚生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+    return 0
+}
+
+config_qq_community_setup() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+
+    ensure_openclaw_init
+
+    local plugin_version="${OPENCLAW_QQ_PLUGIN_VERSION:-$QQ_PLUGIN_VERSION_DEFAULT}"
+    local plugin_spec="${QQ_PLUGIN_COMMUNITY}@${plugin_version}"
+    local app_id=""
+    local app_secret=""
+    local allow_input=""
+    local allow_json=""
+
+    echo -e "${YELLOW}⚠️ 风险提示:${NC}"
+    echo "  • QQ 当前不是官方渠道，依赖社区插件"
+    echo "  • 仅建议用于测试或内部环境，生产环境请评估安全风险"
+    echo "  • 本安装器会固定版本安装，避免 latest 漂移"
+    echo ""
+
+    if ! confirm "继续安装并配置 QQ 社区插件？" "n"; then
+        log_info "已取消 QQ 配置"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}安装插件: ${WHITE}${plugin_spec}${NC}"
+    if openclaw plugins install "$plugin_spec" --pin; then
+        log_info "QQ 社区插件安装成功"
+    else
+        log_warn "插件安装失败，尝试继续使用已安装版本"
+        if ! openclaw plugins list 2>/dev/null | grep -qi "qqbot"; then
+            log_error "未检测到 qqbot 已安装，无法继续"
+            return 1
+        fi
+    fi
+
+    openclaw plugins enable qqbot > /dev/null 2>&1 || true
+    ensure_plugin_in_allow "qqbot"
+
+    echo ""
+    echo -e "${CYAN}请输入 QQ 机器人凭据（官方 Bot 平台）${NC}"
+    read_input "${YELLOW}AppID: ${NC}" app_id
+    read_secret_input "${YELLOW}AppSecret: ${NC}" app_secret
+    if [ -z "$app_id" ] || [ -z "$app_secret" ]; then
+        log_error "AppID / AppSecret 不能为空"
+        return 1
+    fi
+
+    echo ""
+    echo -e "${YELLOW}注册 QQ 渠道...${NC}"
+    local add_output=""
+    add_output="$(openclaw channels add --channel qqbot --token "${app_id}:${app_secret}" 2>&1)"
+    local add_exit=$?
+    echo "$add_output" | grep -v "^🦞" | grep -v "^$" | head -5
+    if [ $add_exit -ne 0 ]; then
+        log_warn "QQ 渠道可能已存在或注册失败，继续写入 allowFrom"
+    fi
+
+    echo ""
+    echo -e "${CYAN}来源白名单（allowFrom）配置:${NC}"
+    echo "  • 输入格式: 12345,67890"
+    echo "  • 留空表示允许所有来源（高风险）"
+    read_input "${YELLOW}请输入允许来源（可留空）: ${NC}" allow_input
+
+    if [ -n "$allow_input" ]; then
+        allow_json="$(build_json_array_from_csv "$allow_input")"
+        if [ "$allow_json" = "[]" ]; then
+            log_error "allowFrom 解析后为空，请重新输入"
+            return 1
+        fi
+        if set_channel_allow_from_json "qqbot" "$allow_json"; then
+            log_info "已设置 allowFrom: $allow_json"
+        else
+            log_error "写入 allowFrom 失败"
+            return 1
+        fi
+    else
+        if confirm "未设置白名单将允许所有来源（[\"*\"]），确认继续？" "n"; then
+            if set_channel_allow_from_json "qqbot" "[\"*\"]"; then
+                log_warn "已设置 allowFrom 为 [\"*\"]（允许全部来源）"
+            else
+                log_error "写入 allowFrom 失败"
+                return 1
+            fi
+        else
+            log_info "已取消保存 QQ 配置"
+            return 1
+        fi
+    fi
+
+    openclaw config set channels.qqbot.enabled true > /dev/null 2>&1 || true
+    log_info "QQ 社区渠道配置完成"
+
+    if confirm "是否立即执行 QQ 配置探针？" "y"; then
+        probe_qq_community_config || true
+    fi
+
+    if confirm "是否重启 Gateway 使配置生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+
+    return 0
+}
+
+config_qq_community() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🐧 QQ（社区插件，可选）${NC}"
+    print_divider
+    echo ""
+    echo "  1) 安装并配置 QQ 社区插件"
+    echo "  2) QQ 配置探针检查"
+    echo "  3) 回滚 QQ 社区配置"
+    echo "  0) 返回"
+    echo ""
+    read_input "${YELLOW}请选择 [0-3]: ${NC}" qq_choice
+
+    case "$qq_choice" in
+        1) config_qq_community_setup ;;
+        2) probe_qq_community_config ;;
+        3) rollback_qq_community_config ;;
+        0) return ;;
+        *) log_error "无效选择" ;;
+    esac
+    press_enter
+}
+
+probe_wechat_langbot_config() {
+    echo ""
+    echo -e "${CYAN}━━━ 微信 LangBot/WeChatPad 探针 ━━━${NC}"
+    echo ""
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法探针"
+        return 1
+    fi
+
+    local plugin_ok=false
+    local channel_ok=false
+    local proxy_url=""
+
+    if openclaw plugins list 2>/dev/null | grep -Eqi "openclaw-wechat-channel|wechat"; then
+        plugin_ok=true
+        log_info "微信社区插件已安装"
+    else
+        log_warn "未检测到微信社区插件"
+    fi
+
+    if openclaw channels list 2>/dev/null | grep -qi "wechat"; then
+        channel_ok=true
+        log_info "微信渠道已注册"
+    else
+        log_warn "微信渠道未在 channels list 中出现"
+    fi
+
+    proxy_url="$(openclaw config get channels.wechat.accounts.main.proxyUrl 2>/dev/null || true)"
+    if [ -z "$proxy_url" ] || [ "$proxy_url" = "undefined" ]; then
+        proxy_url="$(openclaw config get channels.wechat.proxyUrl 2>/dev/null || true)"
+    fi
+    if [ -n "$proxy_url" ] && [ "$proxy_url" != "undefined" ]; then
+        echo -e "${CYAN}Proxy URL:${NC} ${WHITE}$proxy_url${NC}"
+        if curl -fsS --max-time 5 "$proxy_url" >/dev/null 2>&1; then
+            log_info "Proxy 连通性检查通过"
+        else
+            log_warn "Proxy URL 无法直接连通，请检查 LangBot 适配器服务状态"
+        fi
+    else
+        log_warn "未检测到 channels.wechat.proxyUrl / accounts.main.proxyUrl"
+    fi
+
+    if [ "$plugin_ok" = true ] && [ "$channel_ok" = true ]; then
+        log_info "微信配置探针通过"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}排障建议:${NC}"
+    echo "  1) openclaw doctor --fix"
+    echo "  2) openclaw plugins update --all"
+    echo "  3) 重新执行微信配置向导"
+    return 1
+}
+
+rollback_wechat_langbot_config() {
+    echo ""
+    echo -e "${WHITE}♻️ 回滚微信（LangBot/WeChatPad）配置${NC}"
+    print_divider
+    echo ""
+    echo -e "${YELLOW}将执行:${NC}"
+    echo "  • 禁用并卸载微信社区插件"
+    echo "  • 清理 channels.wechat 与 plugins.allow 残留"
+    echo "  • 清理 WECHATPADPRO_* 环境变量"
+    echo ""
+
+    if ! confirm "确认执行回滚？" "n"; then
+        log_info "已取消回滚"
+        return 0
+    fi
+
+    openclaw plugins disable wechat > /dev/null 2>&1 || true
+    openclaw plugins uninstall wechat --keep-files > /dev/null 2>&1 || true
+    openclaw plugins uninstall "$WECHAT_PLUGIN_LANGBOT" --keep-files > /dev/null 2>&1 || true
+
+    if openclaw config --help 2>/dev/null | grep -q "unset"; then
+        openclaw config unset channels.wechat > /dev/null 2>&1 || true
+        openclaw config unset plugins.entries.wechat > /dev/null 2>&1 || true
+    else
+        openclaw config set channels.wechat.enabled false > /dev/null 2>&1 || true
+    fi
+
+    remove_plugin_from_allow "wechat" || true
+    remove_env_export "WECHATPADPRO_BASEURL"
+    remove_env_export "WECHATPADPRO_API_KEY"
+    remove_env_export "WECHATPADPRO_CALLBACK_HOST"
+    remove_env_export "WECHATPADPRO_CALLBACK_PORT"
+    remove_env_export "WECHATPADPRO_CALLBACK_PATH"
+
+    log_info "微信配置回滚完成"
+    if confirm "是否重启 Gateway 使回滚生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+    return 0
+}
+
+config_wechat_langbot_setup() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+
+    ensure_openclaw_init
+
+    local plugin_version="${OPENCLAW_WECHAT_PLUGIN_VERSION:-$WECHAT_PLUGIN_VERSION_DEFAULT}"
+    local plugin_spec="${WECHAT_PLUGIN_LANGBOT}@${plugin_version}"
+    local proxy_url=""
+    local api_key=""
+    local webhook_host=""
+    local webhook_port=""
+    local webhook_path=""
+
+    webhook_host="$(get_gateway_host)"
+    webhook_port="$(get_gateway_port)"
+    webhook_path="$WECHATPAD_CALLBACK_PATH_DEFAULT"
+
+    echo -e "${YELLOW}⚠️ 社区适配说明:${NC}"
+    echo "  • 微信/WeChatPad 当前不在 OpenClaw 官方渠道列表中"
+    echo "  • 此方案按 LangBot 适配器流程对接 WeChatPad 协议"
+    echo "  • 插件固定版本安装，降低升级漂移风险"
+    echo ""
+    echo -e "${CYAN}参考字段（LangBot 文档）:${NC}"
+    echo "  • WECHATPADPRO_BASEURL"
+    echo "  • WECHATPADPRO_API_KEY"
+    echo ""
+
+    if ! confirm "继续安装并配置微信 WeChatPad 适配？" "n"; then
+        log_info "已取消微信配置"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}安装插件: ${WHITE}${plugin_spec}${NC}"
+    if openclaw plugins install "$plugin_spec" --pin; then
+        log_info "微信社区插件安装成功"
+    else
+        log_warn "插件安装失败，尝试继续使用已安装版本"
+        if ! openclaw plugins list 2>/dev/null | grep -Eqi "openclaw-wechat-channel|wechat"; then
+            log_error "未检测到微信插件，无法继续"
+            return 1
+        fi
+    fi
+
+    openclaw plugins enable wechat > /dev/null 2>&1 || true
+    ensure_plugin_in_allow "wechat"
+
+    echo ""
+    read_input "${YELLOW}LangBot/WeChatPad 代理地址 (如 https://your-proxy.example.com): ${NC}" proxy_url
+    read_secret_input "${YELLOW}微信 API Key: ${NC}" api_key
+    read_input "${YELLOW}回调 Host（默认 ${webhook_host}）: ${NC}" webhook_host
+    webhook_host="${webhook_host:-$(get_gateway_host)}"
+    read_input "${YELLOW}回调 Port（默认 ${webhook_port}）: ${NC}" webhook_port
+    webhook_port="${webhook_port:-$(get_gateway_port)}"
+    read_input "${YELLOW}回调 Path（默认 ${webhook_path}）: ${NC}" webhook_path
+    webhook_path="${webhook_path:-$WECHATPAD_CALLBACK_PATH_DEFAULT}"
+
+    if [ -z "$proxy_url" ] || [ -z "$api_key" ]; then
+        log_error "proxy_url / api_key 不能为空"
+        return 1
+    fi
+    if ! is_valid_port "$webhook_port"; then
+        log_error "回调端口无效: $webhook_port"
+        return 1
+    fi
+
+    # 注册渠道（部分版本可选）
+    openclaw channels add --channel wechat > /dev/null 2>&1 || true
+
+    # 写入主账号配置，采用 accounts.main 结构
+    openclaw config set channels.wechat.enabled true > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.enabled true > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.name "wechatpad-main" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.apiKey "$api_key" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.proxyUrl "$proxy_url" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.webhookHost "$webhook_host" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.webhookPort "$webhook_port" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.accounts.main.webhookPath "$webhook_path" > /dev/null 2>&1 || true
+
+    # 顶层镜像字段，兼容部分社区插件读取路径
+    openclaw config set channels.wechat.apiKey "$api_key" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.proxyUrl "$proxy_url" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.webhookHost "$webhook_host" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.webhookPort "$webhook_port" > /dev/null 2>&1 || true
+    openclaw config set channels.wechat.webhookPath "$webhook_path" > /dev/null 2>&1 || true
+
+    upsert_env_export "WECHATPADPRO_BASEURL" "$proxy_url"
+    upsert_env_export "WECHATPADPRO_API_KEY" "$api_key"
+    upsert_env_export "WECHATPADPRO_CALLBACK_HOST" "$webhook_host"
+    upsert_env_export "WECHATPADPRO_CALLBACK_PORT" "$webhook_port"
+    upsert_env_export "WECHATPADPRO_CALLBACK_PATH" "$webhook_path"
+
+    log_info "微信 WeChatPad 适配配置完成"
+    echo -e "${CYAN}回调地址:${NC} ${WHITE}http://${webhook_host}:${webhook_port}${webhook_path}${NC}"
+
+    if confirm "是否立即执行微信配置探针？" "y"; then
+        probe_wechat_langbot_config || true
+    fi
+    if confirm "是否重启 Gateway 使配置生效？" "y"; then
+        restart_gateway_for_channel
+    fi
+    return 0
+}
+
+config_wechat() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🟢 微信（LangBot WeChatPad）${NC}"
+    print_divider
+    echo ""
+    echo "  1) 配置 LangBot 适配器（WeChatPad 协议）"
+    echo "  2) 微信配置探针"
+    echo "  3) 回滚微信配置"
+    echo "  0) 返回"
+    echo ""
+    read_input "${YELLOW}请选择 [0-3]: ${NC}" wechat_choice
+
+    case "$wechat_choice" in
+        1) config_wechat_langbot_setup ;;
+        2) probe_wechat_langbot_config ;;
+        3) rollback_wechat_langbot_config ;;
+        0) return ;;
+        *) log_error "无效选择" ;;
+    esac
     press_enter
 }
 
@@ -3215,44 +4590,48 @@ config_imessage() {
     press_enter
 }
 
-# 安装飞书插件（使用指定版本 0.1.2，因为新版本有问题）
+# 安装飞书插件（仅官方包）
 install_feishu_plugin() {
     echo -e "${YELLOW}安装飞书插件...${NC}"
     echo ""
-    
-    # 检查是否已安装飞书插件
-    local installed=$(openclaw plugins list 2>/dev/null | grep -i feishu || echo "")
-    
-    if [ -n "$installed" ]; then
-        log_info "飞书插件已安装: $installed"
-        return 0
+
+    # 先清理同名插件，避免历史社区包与官方包冲突
+    if openclaw plugins list 2>/dev/null | grep -qi "feishu"; then
+        log_info "检测到已安装飞书插件，先执行重装清理..."
+        openclaw plugins disable feishu > /dev/null 2>&1 || true
+        openclaw plugins uninstall feishu --keep-files > /dev/null 2>&1 || true
+    fi
+
+    local preferred_version="${OPENCLAW_FEISHU_PLUGIN_VERSION:-}"
+    local preferred_spec="$FEISHU_PLUGIN_OFFICIAL"
+    if [ -n "$preferred_version" ]; then
+        preferred_spec="${FEISHU_PLUGIN_OFFICIAL}@${preferred_version}"
     fi
     
-    echo -e "${CYAN}正在安装飞书插件 @m1heng-clawd/feishu ...${NC}"
+    echo -e "${CYAN}正在安装飞书插件 ${preferred_spec} ...${NC}"
     echo ""
     
-    # 使用 openclaw plugins install 安装指定版本
-    # 注意：新版本 0.1.4 有问题（缺少 openclaw.extensions），必须使用 0.1.2
+    # 仅安装官方插件包，并 pin 版本，降低后续升级漂移风险
     local install_output
-    install_output=$(openclaw plugins install @m1heng-clawd/feishu 2>&1)
+    install_output=$(openclaw plugins install "$preferred_spec" --pin 2>&1)
     local install_exit=$?
     
     # 过滤掉 banner，显示关键信息
     echo "$install_output" | grep -v "^🦞" | grep -v "^$" | head -5
     
     if [ $install_exit -eq 0 ]; then
+        openclaw plugins enable feishu > /dev/null 2>&1 || true
+        ensure_plugin_in_allow "feishu"
         echo ""
         log_info "✅ 飞书插件安装成功！"
         return 0
     else
         echo ""
-        log_error "插件安装失败"
+        log_warn "插件安装失败: $preferred_spec"
+        
         echo ""
-        echo -e "${CYAN}请手动安装:${NC}"
-        echo "  openclaw plugins install @m1heng-clawd/feishu"
-        echo ""
-        echo -e "${YELLOW}⚠️  注意: 必须使用 0.1.2 版本，新版本 0.1.4 有问题${NC}"
-        echo ""
+        log_error "飞书插件安装失败，请手动重试"
+        echo -e "${CYAN}官方插件:${NC} ${WHITE}openclaw plugins install $FEISHU_PLUGIN_OFFICIAL${NC}"
         return 1
     fi
 }
@@ -3276,10 +4655,10 @@ save_feishu_config() {
         log_warn "飞书渠道可能已存在，继续配置..."
     fi
     
-    # 使用 openclaw config set 设置凭证
+    # 使用官方推荐结构写入 credentials（accounts.main）
     echo -e "${YELLOW}配置 App ID...${NC}"
     local set_output
-    set_output=$(openclaw config set channels.feishu.appId "$app_id" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appId "$app_id" 2>&1)
     local set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3290,7 +4669,7 @@ save_feishu_config() {
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
     echo -e "${YELLOW}配置 App Secret...${NC}"
-    set_output=$(openclaw config set channels.feishu.appSecret "$app_secret" 2>&1)
+    set_output=$(openclaw config set channels.feishu.accounts.main.appSecret "$app_secret" 2>&1)
     set_exit=$?
     
     if [ $set_exit -ne 0 ]; then
@@ -3300,14 +4679,61 @@ save_feishu_config() {
     fi
     echo "$set_output" | grep -v "^🦞" | grep -v "^$" | head -1
     
-    # 设置其他默认配置
+    # 保持最小必要配置，避免覆盖用户现有个性化设置
     openclaw config set channels.feishu.enabled true > /dev/null 2>&1 || true
+    openclaw config set channels.feishu.accounts.main.enabled true > /dev/null 2>&1 || true
     openclaw config set channels.feishu.connectionMode websocket > /dev/null 2>&1 || true
-    openclaw config set channels.feishu.domain feishu > /dev/null 2>&1 || true
-    openclaw config set channels.feishu.requireMention true > /dev/null 2>&1 || true
     
     log_info "飞书渠道配置完成"
     return 0
+}
+
+# 飞书配置探针：检查插件、渠道与关键配置项
+probe_feishu_config() {
+    echo ""
+    echo -e "${CYAN}━━━ 飞书配置探针 ━━━${NC}"
+    echo ""
+    
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法探针"
+        return 1
+    fi
+    
+    local plugin_ok=false
+    local channel_ok=false
+    
+    if openclaw plugins list 2>/dev/null | grep -qi "feishu"; then
+        plugin_ok=true
+        log_info "飞书插件已安装"
+    else
+        log_warn "飞书插件未在 plugins list 中出现"
+    fi
+    
+    if openclaw channels list 2>/dev/null | grep -qi "feishu"; then
+        channel_ok=true
+        log_info "飞书渠道已注册"
+    else
+        log_warn "飞书渠道未在 channels list 中出现"
+    fi
+    
+    local mode=$(openclaw config get channels.feishu.connectionMode 2>/dev/null || echo "")
+    if [ -n "$mode" ] && [ "$mode" != "undefined" ]; then
+        log_info "连接模式: $mode"
+    else
+        log_warn "未读取到 channels.feishu.connectionMode"
+    fi
+    
+    if [ "$plugin_ok" = true ] && [ "$channel_ok" = true ]; then
+        log_info "飞书配置探针通过"
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}排障建议:${NC}"
+    echo "  1) openclaw doctor --fix"
+    echo "  2) openclaw plugins update --all"
+    echo "  3) openclaw gateway restart"
+    return 1
 }
 
 config_feishu() {
@@ -3318,7 +4744,7 @@ config_feishu() {
     print_divider
     echo ""
     
-    echo -e "${YELLOW}⚠️ 注意: 飞书接入通过社区插件支持${NC}"
+    echo -e "${YELLOW}⚠️ 注意: 飞书接入依赖插件，请优先使用官方插件${NC}"
     echo ""
     
     if ! check_openclaw_installed; then
@@ -3329,7 +4755,7 @@ config_feishu() {
     
     echo -e "${CYAN}飞书接入说明:${NC}"
     echo ""
-    echo -e "  ${WHITE}使用社区插件 @m1heng-clawd/feishu${NC}"
+    echo -e "  ${WHITE}仅使用官方插件 @openclaw/feishu${NC}"
     echo ""
     echo -e "  ${GREEN}✓ 支持 WebSocket 连接（无需公网服务器）${NC}"
     echo -e "  ${GREEN}✓ 支持私聊和群聊${NC}"
@@ -3362,18 +4788,21 @@ config_feishu_app() {
     echo -e "${CYAN}配置步骤:${NC}"
     echo ""
     echo "  ${WHITE}第一步: 安装飞书插件${NC} (自动完成)"
-    echo "    • 安装社区插件 @m1heng-clawd/feishu"
+    echo "    • 安装官方插件 @openclaw/feishu"
     echo ""
     echo "  ${WHITE}第二步: 飞书开放平台创建应用${NC}"
-    echo "    1. 访问 https://open.feishu.cn/"
+    echo "    1. 访问 https://open.feishu.cn/app (飞书)"
+    echo "       或 https://open.larksuite.com/app (Lark 国际版)"
     echo "    2. 创建企业自建应用 → 添加「机器人」能力"
     echo "    3. 获取 App ID 和 App Secret"
     echo ""
     echo "  ${WHITE}第三步: 配置机器人权限${NC}"
-    echo "    • 权限管理 → 添加以下权限:"
-    echo "      - im:message (收发消息)"
-    echo "      - im:message:send_as_bot (发送消息)"
-    echo "      - im:chat:readonly (读取群信息)"
+    echo "    • 权限管理 → 建议使用「批量导入」(更稳)"
+    echo "      - im:message (收发消息，必须)"
+    echo "      - im:message:send_as_bot (发送消息，必须)"
+    echo "      - im:resource (图片/文件，多媒体推荐)"
+    echo "      - im:chat:readonly (读取群信息，推荐)"
+    echo "    • 可选查看官方推荐 scopes JSON（脚本稍后可打印）"
     echo ""
     echo "  ${WHITE}第四步: 输入配置信息${NC}"
     echo "    • 在此输入 App ID 和 App Secret"
@@ -3401,7 +4830,11 @@ config_feishu_app() {
     echo -e "${WHITE}━━━ 第一步: 安装飞书插件 (自动) ━━━${NC}"
     echo ""
     
-    install_feishu_plugin
+    if ! install_feishu_plugin; then
+        log_error "飞书插件安装失败，已停止后续飞书配置。"
+        press_enter
+        return
+    fi
     
     echo ""
     log_info "✅ 第一步完成！插件已就绪"
@@ -3411,16 +4844,50 @@ config_feishu_app() {
     echo -e "${WHITE}━━━ 第二、三步: 请在飞书开放平台完成 ━━━${NC}"
     echo ""
     echo -e "${CYAN}请打开飞书开放平台完成以下操作:${NC}"
-    echo "  1. 访问 https://open.feishu.cn/"
+    echo "  1. 访问 https://open.feishu.cn/app (飞书) 或 https://open.larksuite.com/app (Lark)"
     echo "  2. 创建企业自建应用 → 添加「机器人」能力"
     echo "  3. 获取 App ID 和 App Secret"
-    echo "  4. 权限管理 → 添加权限:"
-    echo "     - im:message (收发消息)"
-    echo "     - im:message:send_as_bot (发送消息)"
-    echo "     - im:chat:readonly (读取群信息)"
+    echo "  4. 权限管理 → 建议「批量导入」权限 scopes"
+    echo "     - 至少包含: im:message / im:message:send_as_bot"
+    echo "     - 多媒体建议: im:resource"
+    echo "     - 群信息建议: im:chat:readonly"
     echo ""
     echo -e "${GREEN}💡 提示: 使用长连接模式，无需配置公网 Webhook 地址${NC}"
     echo ""
+
+    if confirm "是否显示官方推荐「权限管理 → 批量导入」JSON？" "n"; then
+        echo ""
+        echo -e "${CYAN}将以下 JSON 粘贴到飞书后台：权限管理 → 批量导入${NC}"
+        cat << 'EOF'
+{
+  "scopes": {
+    "tenant": [
+      "aily:file:read",
+      "aily:file:write",
+      "application:application.app_message_stats.overview:readonly",
+      "application:application:self_manage",
+      "application:bot.menu:write",
+      "cardkit:card:read",
+      "cardkit:card:write",
+      "contact:user.employee_id:readonly",
+      "corehr:file:download",
+      "event:ip_list",
+      "im:chat.access_event.bot_p2p_chat:read",
+      "im:chat.members:bot_access",
+      "im:message",
+      "im:message.group_at_msg:readonly",
+      "im:message.p2p_msg:readonly",
+      "im:message:readonly",
+      "im:message:send_as_bot",
+      "im:resource"
+    ],
+    "user": ["aily:file:read", "aily:file:write", "im:chat.access_event.bot_p2p_chat:read"]
+  }
+}
+EOF
+        echo ""
+        echo -e "${GRAY}完整版步骤文档: https://github.com/${INSTALLER_REPO}/blob/main/docs/feishu-setup.md${NC}"
+    fi
     
     if ! confirm "已完成飞书后台配置，继续输入信息？"; then
         press_enter
@@ -3436,8 +4903,7 @@ config_feishu_app() {
     echo ""
     echo -en "${YELLOW}输入 App ID: ${NC}"
     read feishu_app_id < "$TTY_INPUT"
-    echo -en "${YELLOW}输入 App Secret: ${NC}"
-    read feishu_app_secret < "$TTY_INPUT"
+    read_secret_input "${YELLOW}输入 App Secret: ${NC}" feishu_app_secret
     
     if [ -z "$feishu_app_id" ] || [ -z "$feishu_app_secret" ]; then
         log_error "App ID 和 App Secret 不能为空"
@@ -3453,6 +4919,7 @@ config_feishu_app() {
     
     if save_feishu_config "$feishu_app_id" "$feishu_app_secret"; then
         log_info "飞书渠道配置成功！"
+        probe_feishu_config || true
     else
         log_warn "配置保存失败，请检查"
     fi
@@ -3582,32 +5049,44 @@ config_security() {
     
     case $choice in
         1)
+            local enable_shell="false"
             if confirm "允许 OpenClaw 执行系统命令？这可能带来安全风险" "n"; then
-                log_info "已启用系统命令执行"
-            else
-                log_info "已禁用系统命令执行"
+                enable_shell="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_shell_commands "$enable_shell" 2>/dev/null || true
+            fi
+            [ "$enable_shell" = "true" ] && log_info "已启用系统命令执行" || log_info "已禁用系统命令执行"
             ;;
         2)
+            local enable_file="false"
             if confirm "允许 OpenClaw 读写文件？" "n"; then
-                log_info "已启用文件访问"
-            else
-                log_info "已禁用文件访问"
+                enable_file="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_file_access "$enable_file" 2>/dev/null || true
+            fi
+            [ "$enable_file" = "true" ] && log_info "已启用文件访问" || log_info "已禁用文件访问"
             ;;
         3)
+            local enable_web="false"
             if confirm "允许 OpenClaw 浏览网络？" "y"; then
-                log_info "已启用网络浏览"
-            else
-                log_info "已禁用网络浏览"
+                enable_web="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.enable_web_browsing "$enable_web" 2>/dev/null || true
+            fi
+            [ "$enable_web" = "true" ] && log_info "已启用网络浏览" || log_info "已禁用网络浏览"
             ;;
         4)
+            local sandbox_mode="false"
             if confirm "启用沙箱模式？(推荐)" "y"; then
-                log_info "已启用沙箱模式"
-            else
-                log_warn "已禁用沙箱模式，请注意安全风险"
+                sandbox_mode="true"
             fi
+            if check_openclaw_installed; then
+                openclaw config set security.sandbox_mode "$sandbox_mode" 2>/dev/null || true
+            fi
+            [ "$sandbox_mode" = "true" ] && log_info "已启用沙箱模式" || log_warn "已禁用沙箱模式，请注意安全风险"
             ;;
         5)
             config_whitelist
@@ -3650,6 +5129,148 @@ config_whitelist() {
 
 # ================================ 服务管理 ================================
 
+stop_openclaw_for_uninstall() {
+    log_info "正在停止 OpenClaw 服务..."
+    if check_openclaw_installed; then
+        openclaw gateway stop 2>/dev/null || true
+        sleep 1
+    fi
+    local uninstall_pid
+    uninstall_pid="$(get_gateway_pid)"
+    if [ -n "$uninstall_pid" ]; then
+        log_warn "强制停止残留进程 (PID: $uninstall_pid)"
+        kill -9 "$uninstall_pid" 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+remove_openclaw_system_services() {
+    if [ -f "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" ]; then
+        log_info "移除 macOS 系统服务..."
+        launchctl unload "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" 2>/dev/null || true
+        rm -f "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" 2>/dev/null || true
+    fi
+
+    if [ -f "/etc/systemd/system/openclaw.service" ]; then
+        log_info "移除 systemd 系统服务..."
+        sudo systemctl stop openclaw 2>/dev/null || true
+        sudo systemctl disable openclaw 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/openclaw.service 2>/dev/null || true
+        sudo systemctl daemon-reload 2>/dev/null || true
+    fi
+}
+
+uninstall_openclaw_global() {
+    echo ""
+    echo -e "${CYAN}执行全局卸载（保留 ~/.openclaw 目录）...${NC}"
+    stop_openclaw_for_uninstall
+    remove_openclaw_system_services
+
+    log_info "卸载全局 npm 包 openclaw..."
+    npm uninstall -g openclaw 2>&1 | grep -v "^npm" | head -8 || true
+
+    if command -v openclaw >/dev/null 2>&1; then
+        log_warn "openclaw 命令仍存在，请检查是否有多重安装源"
+    else
+        log_info "全局卸载完成"
+    fi
+}
+
+uninstall_openclaw_directory_preserve_assets() {
+    local oc_dir="$HOME/.openclaw"
+    echo ""
+    echo -e "${CYAN}执行目录卸载（保留 skills / plugins）...${NC}"
+
+    if [ ! -d "$oc_dir" ]; then
+        log_warn "未找到目录: $oc_dir"
+        return 0
+    fi
+
+    local tmp_keep
+    tmp_keep="$(mktemp -d)"
+
+    if [ -d "$oc_dir/skills" ]; then
+        cp -a "$oc_dir/skills" "$tmp_keep/skills" 2>/dev/null || true
+    fi
+    if [ -d "$oc_dir/plugins" ]; then
+        cp -a "$oc_dir/plugins" "$tmp_keep/plugins" 2>/dev/null || true
+    fi
+
+    rm -rf "$oc_dir"
+    mkdir -p "$oc_dir"
+    chmod 700 "$oc_dir" 2>/dev/null || true
+
+    if [ -d "$tmp_keep/skills" ]; then
+        cp -a "$tmp_keep/skills" "$oc_dir/skills" 2>/dev/null || true
+    fi
+    if [ -d "$tmp_keep/plugins" ]; then
+        cp -a "$tmp_keep/plugins" "$oc_dir/plugins" 2>/dev/null || true
+    fi
+    rm -rf "$tmp_keep"
+
+    log_info "目录卸载完成：已保留 ~/.openclaw/skills 与 ~/.openclaw/plugins"
+}
+
+uninstall_openclaw_directory_full() {
+    local oc_dir="$HOME/.openclaw"
+    if [ -d "$oc_dir" ]; then
+        rm -rf "$oc_dir"
+        log_info "已删除目录: $oc_dir"
+    else
+        log_warn "未找到目录: $oc_dir"
+    fi
+}
+
+openclaw_uninstall_menu() {
+    clear_screen
+    print_header
+    echo -e "${WHITE}🗑️ OpenClaw 卸载中心${NC}"
+    print_divider
+    echo ""
+    echo "  1) 全局卸载（移除命令、服务；保留 ~/.openclaw）"
+    echo "  2) 目录卸载（仅清理 ~/.openclaw，保留 skills/plugins）"
+    echo "  3) 完全卸载（全局 + 删除 ~/.openclaw）"
+    echo "  0) 返回"
+    echo ""
+    read_input "${YELLOW}请选择 [0-3]: ${NC}" uninstall_choice
+
+    case "$uninstall_choice" in
+        1)
+            if confirm "确认执行全局卸载？" "n"; then
+                uninstall_openclaw_global
+            else
+                log_info "已取消"
+            fi
+            ;;
+        2)
+            if confirm "确认执行目录卸载并保留 skills/plugins？" "n"; then
+                uninstall_openclaw_directory_preserve_assets
+            else
+                log_info "已取消"
+            fi
+            ;;
+        3)
+            if confirm "确认执行完全卸载？该操作不可恢复" "n"; then
+                uninstall_openclaw_global
+                uninstall_openclaw_directory_full
+            else
+                log_info "已取消"
+            fi
+            ;;
+        0)
+            return
+            ;;
+        *)
+            log_error "无效选择"
+            ;;
+    esac
+
+    echo ""
+    echo -e "${CYAN}如需重新安装:${NC}"
+    echo "  curl -fsSL ${INSTALLER_RAW_URL}/install.sh | bash"
+    press_enter
+}
+
 manage_service() {
     clear_screen
     print_header
@@ -3659,7 +5280,8 @@ manage_service() {
     echo ""
     
     # 使用端口检测判断服务状态（更可靠）
-    local menu_status_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+    local menu_status_pid
+    menu_status_pid=$(get_gateway_pid)
     if [ -n "$menu_status_pid" ]; then
         echo -e "  当前状态: ${GREEN}● 运行中${NC} (PID: $menu_status_pid)"
     else
@@ -3674,22 +5296,25 @@ manage_service() {
     print_menu_item "5" "查看日志" "📋"
     print_menu_item "6" "运行诊断并修复" "🔍"
     print_menu_item "7" "安装为系统服务" "⚙️"
+    print_menu_item "9" "修改 Gateway 地址/端口" "🌐"
     echo ""
     echo -e "  ${RED}[8]${NC} 🗑️  卸载 OpenClaw"
     echo ""
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    echo -en "${YELLOW}请选择 [0-8]: ${NC}"
+    echo -en "${YELLOW}请选择 [0-9]: ${NC}"
     read choice < "$TTY_INPUT"
     
     case $choice in
         1)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 # 先检查服务是否已经在运行（使用端口检测，更可靠）
-                local port=18789
-                local running_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local port
+                port="$(get_gateway_port)"
+                local running_pid
+                running_pid=$(get_port_pid "$port")
                 
                 if [ -n "$running_pid" ]; then
                     echo -e "${GREEN}✓ 服务已经在运行中！${NC} (PID: $running_pid)"
@@ -3721,14 +5346,15 @@ manage_service() {
                 fi
                 
                 # 检测端口是否被其他进程占用
-                local port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                local port_pid
+                port_pid=$(get_port_pid "$port")
                 
                 if [ -n "$port_pid" ]; then
                     echo -e "${YELLOW}检测到端口 $port 被其他进程占用 (PID: $port_pid)${NC}"
                     if confirm "是否停止占用端口的进程？" "y"; then
                         openclaw gateway stop > /dev/null 2>&1 || true
                         sleep 1
-                        port_pid=$(lsof -ti :$port 2>/dev/null | head -1)
+                        port_pid=$(get_port_pid "$port")
                         if [ -n "$port_pid" ]; then
                             kill -9 $port_pid 2>/dev/null || true
                             sleep 1
@@ -3774,16 +5400,16 @@ manage_service() {
                 # 后台启动 Gateway（使用 setsid 完全脱离终端）
                 if command -v setsid &> /dev/null; then
                     if [ -f "$OPENCLAW_ENV" ]; then
-                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+                        setsid bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        setsid openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+                        setsid openclaw gateway --port "${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                 else
                     # 备用方案：nohup + disown
                     if [ -f "$OPENCLAW_ENV" ]; then
-                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port 18789" > /tmp/openclaw-gateway.log 2>&1 &
+                        nohup bash -c "source $OPENCLAW_ENV && exec openclaw gateway --port ${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     else
-                        nohup openclaw gateway --port 18789 > /tmp/openclaw-gateway.log 2>&1 &
+                        nohup openclaw gateway --port "${port}" > /tmp/openclaw-gateway.log 2>&1 &
                     fi
                     disown 2>/dev/null || true
                 fi
@@ -3793,7 +5419,7 @@ manage_service() {
                 local check_count=0
                 while [ $check_count -lt 5 ]; do
                     sleep 1
-                    gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                    gateway_pid=$(get_gateway_pid)
                     if [ -n "$gateway_pid" ]; then
                         break
                     fi
@@ -3829,7 +5455,7 @@ manage_service() {
                         tail -5 /tmp/openclaw-gateway.log 2>/dev/null | sed 's/^/  /'
                     fi
                 else
-                    log_error "启动失败，端口 18789 无服务监听"
+                    log_error "启动失败，端口 ${port} 无服务监听"
                     echo ""
                     
                     # 显示日志文件内容
@@ -3858,11 +5484,12 @@ manage_service() {
         2)
             echo ""
             log_info "正在停止服务..."
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw gateway stop 2>/dev/null || true
                 sleep 1
                 # 使用端口检测判断服务是否已停止（更可靠）
-                local stop_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local stop_pid
+                stop_pid=$(get_gateway_pid)
                 if [ -z "$stop_pid" ]; then
                     log_info "服务已停止"
                 else
@@ -3876,7 +5503,7 @@ manage_service() {
         3)
             echo ""
             log_info "正在重启服务..."
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 # 确保配置正确
                 ensure_openclaw_init
                 
@@ -3893,7 +5520,8 @@ manage_service() {
                 sleep 2
                 
                 # 使用端口检测判断服务是否启动成功（更可靠）
-                local gateway_pid=$(lsof -ti :18789 2>/dev/null | head -1)
+                local gateway_pid
+                gateway_pid=$(get_gateway_pid)
                 
                 if [ -n "$gateway_pid" ]; then
                     log_info "服务已重启 (PID: $gateway_pid)"
@@ -3947,7 +5575,7 @@ manage_service() {
             ;;
         4)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw status
             else
                 log_error "OpenClaw 未安装"
@@ -3955,7 +5583,7 @@ manage_service() {
             ;;
         5)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 echo -e "${CYAN}按 Ctrl+C 退出日志查看${NC}"
                 sleep 1
                 openclaw logs --follow
@@ -3965,7 +5593,7 @@ manage_service() {
             ;;
         6)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 openclaw doctor --fix
             else
                 log_error "OpenClaw 未安装"
@@ -3973,7 +5601,7 @@ manage_service() {
             ;;
         7)
             echo ""
-            if command -v openclaw &> /dev/null; then
+            if check_openclaw_installed; then
                 log_info "正在安装系统服务..."
                 openclaw gateway install
                 log_info "系统服务已安装"
@@ -3987,102 +5615,50 @@ manage_service() {
             fi
             ;;
         8)
+            openclaw_uninstall_menu
+            manage_service
+            return
+            ;;
+        9)
             echo ""
-            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo -e "${RED}           ⚠️  卸载 OpenClaw${NC}"
-            echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo ""
-            echo -e "${YELLOW}此操作将:${NC}"
-            echo "  1. 停止 OpenClaw 服务"
-            echo "  2. 卸载 openclaw npm 包"
-            echo "  3. 可选删除配置目录 (~/.openclaw)"
-            echo ""
-            
-            if ! confirm "确定要卸载 OpenClaw 吗？" "n"; then
-                log_info "已取消卸载"
+            if ! check_openclaw_installed; then
+                log_error "OpenClaw 未安装"
                 press_enter
                 manage_service
                 return
             fi
-            
+
+            local current_host current_port new_host new_port
+            current_host="$(get_gateway_host)"
+            current_port="$(get_gateway_port)"
+            echo -e "${CYAN}当前 Gateway 地址: ${WHITE}${current_host}:${current_port}${NC}"
             echo ""
-            
-            # 1. 停止服务
-            log_info "正在停止服务..."
-            if command -v openclaw &> /dev/null; then
-                openclaw gateway stop 2>/dev/null || true
-                sleep 1
+
+            read_input "${YELLOW}新 Host（默认 ${current_host}）: ${NC}" new_host
+            new_host="${new_host:-$current_host}"
+            read_input "${YELLOW}新 Port（默认 ${current_port}）: ${NC}" new_port
+            new_port="${new_port:-$current_port}"
+
+            if ! is_valid_port "$new_port"; then
+                log_error "端口无效: $new_port"
+                press_enter
+                manage_service
+                return
             fi
-            
-            # 使用端口检测确保服务已停止
-            local uninstall_pid=$(lsof -ti :18789 2>/dev/null | head -1)
-            if [ -n "$uninstall_pid" ]; then
-                log_warn "强制停止服务 (PID: $uninstall_pid)..."
-                kill -9 $uninstall_pid 2>/dev/null || true
-                sleep 1
+
+            openclaw config set gateway.mode local > /dev/null 2>&1 || true
+            openclaw config set gateway.host "$new_host" > /dev/null 2>&1 || true
+            openclaw config set gateway.port "$new_port" > /dev/null 2>&1 || true
+            openclaw config set gateway.bind "$new_host:$new_port" > /dev/null 2>&1 || true
+            upsert_env_export "OPENCLAW_GATEWAY_HOST" "$new_host"
+            upsert_env_export "OPENCLAW_GATEWAY_PORT" "$new_port"
+
+            log_info "Gateway 地址已更新为 ${new_host}:${new_port}"
+            if confirm "是否立即重启 Gateway 使新地址生效？" "y"; then
+                restart_gateway_for_channel
             fi
-            log_info "服务已停止"
-            
-            # 2. 卸载系统服务（如果已安装）
-            if [ -f "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" ]; then
-                log_info "移除 macOS 系统服务..."
-                launchctl unload "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" 2>/dev/null || true
-                rm -f "$HOME/Library/LaunchAgents/com.openclaw.agent.plist" 2>/dev/null || true
-            fi
-            
-            if [ -f "/etc/systemd/system/openclaw.service" ]; then
-                log_info "移除 systemd 系统服务..."
-                sudo systemctl stop openclaw 2>/dev/null || true
-                sudo systemctl disable openclaw 2>/dev/null || true
-                sudo rm -f /etc/systemd/system/openclaw.service 2>/dev/null || true
-                sudo systemctl daemon-reload 2>/dev/null || true
-            fi
-            
-            # 3. 卸载 npm 包
-            log_info "正在卸载 openclaw..."
-            npm uninstall -g openclaw 2>&1 | grep -v "^npm" | head -5 || true
-            
-            if ! command -v openclaw &> /dev/null; then
-                log_info "OpenClaw 已卸载"
-            else
-                log_warn "卸载可能未完全成功，请手动运行: npm uninstall -g openclaw"
-            fi
-            
-            # 4. 询问是否删除配置
-            echo ""
-            if [ -d "$HOME/.openclaw" ]; then
-                echo -e "${YELLOW}检测到配置目录: ~/.openclaw${NC}"
-                echo ""
-                if confirm "是否删除配置目录？（包含所有配置和数据）" "n"; then
-                    # 备份提示
-                    echo ""
-                    if confirm "是否先备份到 ~/openclaw_backup_$(date +%Y%m%d)？" "y"; then
-                        local backup_dir="$HOME/openclaw_backup_$(date +%Y%m%d)"
-                        cp -r "$HOME/.openclaw" "$backup_dir" 2>/dev/null || true
-                        log_info "配置已备份到: $backup_dir"
-                    fi
-                    
-                    rm -rf "$HOME/.openclaw"
-                    log_info "配置目录已删除"
-                else
-                    log_info "保留配置目录 (~/.openclaw)"
-                fi
-            fi
-            
-            echo ""
-            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo -e "${GREEN}           ✓ OpenClaw 卸载完成${NC}"
-            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo ""
-            echo -e "${CYAN}如需重新安装，请运行:${NC}"
-            echo "  curl -fsSL https://raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh | bash"
-            echo ""
-            echo -e "${CYAN}或下载桌面版:${NC}"
-            echo "  https://github.com/miaoxworld/openclaw-manager"
-            echo ""
-            
             press_enter
-            # 卸载后返回主菜单
+            manage_service
             return
             ;;
         0)
@@ -4125,6 +5701,109 @@ ensure_openclaw_init() {
     fi
 }
 
+# 为 MiniMax 写入官方兼容 provider 配置，避免旧版本出现 Unknown model
+ensure_minimax_provider_config() {
+    local provider="$1"   # minimax|minimax-cn
+    local model="$2"      # MiniMax-M2.5 / MiniMax-M2.5-highspeed
+    local config_file="$3"
+    local base_url="https://api.minimax.io/anthropic"
+    if [ "$provider" = "minimax-cn" ]; then
+        base_url="https://api.minimaxi.com/anthropic"
+    fi
+
+    mkdir -p "$(dirname "$config_file")" 2>/dev/null || true
+    [ -f "$config_file" ] || echo "{}" > "$config_file"
+
+    if command -v node &> /dev/null; then
+        node -e "
+const fs = require('fs');
+const file = '$config_file';
+const provider = '$provider';
+const model = '$model';
+const baseUrl = '$base_url';
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+cfg.models ||= {};
+cfg.models.mode ||= 'merge';
+cfg.models.providers ||= {};
+const p = cfg.models.providers[provider] || {};
+const models = Array.isArray(p.models) ? p.models : [];
+const catalog = {
+  'MiniMax-M2.5': { name: 'MiniMax M2.5' },
+  'MiniMax-M2.5-highspeed': { name: 'MiniMax M2.5 Highspeed' },
+};
+const modelIds = new Set(models.map(m => m.id));
+for (const id of ['MiniMax-M2.5', 'MiniMax-M2.5-highspeed']) {
+  if (!modelIds.has(id)) {
+    models.push({
+      id,
+      name: (catalog[id] && catalog[id].name) || id,
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0.12 },
+      contextWindow: 200000,
+      maxTokens: 8192
+    });
+  }
+}
+cfg.models.providers[provider] = {
+  ...p,
+  baseUrl,
+  api: 'anthropic-messages',
+  authHeader: true,
+  models
+};
+cfg.agents ||= {};
+cfg.agents.defaults ||= {};
+cfg.agents.defaults.models ||= {};
+const ref = provider + '/' + model;
+cfg.agents.defaults.models[ref] = { ...(cfg.agents.defaults.models[ref] || {}), alias: 'Minimax' };
+fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+" >/dev/null 2>&1 || true
+    elif command -v python3 &> /dev/null; then
+        python3 - <<PYEOF
+import json, os
+file = os.path.expanduser("$config_file")
+provider = "$provider"
+model = "$model"
+base_url = "$base_url"
+try:
+    with open(file, "r") as f:
+        cfg = json.load(f)
+except Exception:
+    cfg = {}
+cfg.setdefault("models", {})
+cfg["models"].setdefault("mode", "merge")
+cfg["models"].setdefault("providers", {})
+p = cfg["models"]["providers"].get(provider, {})
+models = p.get("models", []) if isinstance(p.get("models"), list) else []
+catalog = {
+    "MiniMax-M2.5": "MiniMax M2.5",
+    "MiniMax-M2.5-highspeed": "MiniMax M2.5 Highspeed",
+}
+existing = {m.get("id") for m in models if isinstance(m, dict)}
+for mid in ("MiniMax-M2.5", "MiniMax-M2.5-highspeed"):
+    if mid not in existing:
+        models.append({
+            "id": mid, "name": catalog.get(mid, mid), "reasoning": True, "input": ["text"],
+            "cost": {"input": 0.3, "output": 1.2, "cacheRead": 0.03, "cacheWrite": 0.12},
+            "contextWindow": 200000, "maxTokens": 8192
+        })
+cfg["models"]["providers"][provider] = {
+    **(p if isinstance(p, dict) else {}),
+    "baseUrl": base_url,
+    "api": "anthropic-messages",
+    "authHeader": True,
+    "models": models
+}
+cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})
+cfg["agents"]["defaults"]["models"][f"{provider}/{model}"] = {"alias": "Minimax"}
+with open(file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+    fi
+}
+
 # 保存 AI 配置到 OpenClaw 环境变量
 # 参数: provider api_key model base_url [api_type]
 save_openclaw_ai_config() {
@@ -4159,25 +5838,25 @@ EOF
             echo "export DEEPSEEK_API_KEY=$api_key" >> "$env_file"
             echo "export DEEPSEEK_BASE_URL=${base_url:-https://api.deepseek.com}" >> "$env_file"
             ;;
-        kimi)
+        moonshot|kimi)
             echo "export MOONSHOT_API_KEY=$api_key" >> "$env_file"
-            echo "export MOONSHOT_BASE_URL=${base_url:-https://api.moonshot.cn/v1}" >> "$env_file"
+            echo "export MOONSHOT_BASE_URL=${base_url:-https://api.moonshot.ai/v1}" >> "$env_file"
             ;;
         google|google-gemini-cli|google-antigravity)
             echo "export GOOGLE_API_KEY=$api_key" >> "$env_file"
             [ -n "$base_url" ] && echo "export GOOGLE_BASE_URL=$base_url" >> "$env_file"
             ;;
         groq)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://api.groq.com/openai/v1}" >> "$env_file"
+            echo "export GROQ_API_KEY=$api_key" >> "$env_file"
+            echo "export GROQ_BASE_URL=${base_url:-https://api.groq.com/openai/v1}" >> "$env_file"
             ;;
         mistral)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://api.mistral.ai/v1}" >> "$env_file"
+            echo "export MISTRAL_API_KEY=$api_key" >> "$env_file"
+            echo "export MISTRAL_BASE_URL=${base_url:-https://api.mistral.ai/v1}" >> "$env_file"
             ;;
         openrouter)
-            echo "export OPENAI_API_KEY=$api_key" >> "$env_file"
-            echo "export OPENAI_BASE_URL=${base_url:-https://openrouter.ai/api/v1}" >> "$env_file"
+            echo "export OPENROUTER_API_KEY=$api_key" >> "$env_file"
+            echo "export OPENROUTER_BASE_URL=${base_url:-https://openrouter.ai/api/v1}" >> "$env_file"
             ;;
         ollama)
             echo "export OLLAMA_HOST=${base_url:-http://localhost:11434}" >> "$env_file"
@@ -4191,7 +5870,7 @@ EOF
         minimax|minimax-cn)
             echo "export MINIMAX_API_KEY=$api_key" >> "$env_file"
             ;;
-        opencode)
+        opencode|opencode-go)
             echo "export OPENCODE_API_KEY=$api_key" >> "$env_file"
             ;;
         novita)
@@ -4201,6 +5880,10 @@ EOF
     esac
 
     chmod 600 "$env_file"
+
+    if [ "$provider" = "minimax" ] || [ "$provider" = "minimax-cn" ]; then
+        ensure_minimax_provider_config "$provider" "$model" "$config_file"
+    fi
     
     # 设置默认模型
     if check_openclaw_installed; then
@@ -4222,14 +5905,20 @@ EOF
                 anthropic)
                     openclaw_model="anthropic/$model"
                     ;;
-                openai|groq|mistral)
+                openai)
                     openclaw_model="openai/$model"
+                    ;;
+                groq)
+                    openclaw_model="groq/$model"
+                    ;;
+                mistral)
+                    openclaw_model="mistral/$model"
                     ;;
                 deepseek)
                     openclaw_model="deepseek/$model"
                     ;;
-                kimi)
-                    openclaw_model="kimi/$model"
+                moonshot|kimi)
+                    openclaw_model="moonshot/$model"
                     ;;
                 openrouter)
                     openclaw_model="openrouter/$model"
@@ -4255,6 +5944,9 @@ EOF
                 opencode)
                     openclaw_model="opencode/$model"
                     ;;
+                opencode-go)
+                    openclaw_model="opencode-go/$model"
+                    ;;
                 google-gemini-cli)
                     openclaw_model="google-gemini-cli/$model"
                     ;;
@@ -4270,8 +5962,15 @@ EOF
         if [ -n "$openclaw_model" ]; then
             # 加载环境变量并设置模型
             source "$env_file"
-            openclaw models set "$openclaw_model" 2>/dev/null || true
-            log_info "OpenClaw 默认模型已设置为: $openclaw_model"
+            local set_output=""
+            if set_output=$(openclaw models set "$openclaw_model" 2>&1); then
+                log_info "OpenClaw 默认模型已设置为: $openclaw_model"
+            else
+                log_warn "openclaw models set 失败，回退到配置写入"
+                echo "$set_output" | head -3 | sed 's/^/  /'
+                openclaw config set agents.defaults.model.primary "$openclaw_model" 2>/dev/null || true
+                openclaw config set models.default "$openclaw_model" 2>/dev/null || true
+            fi
         fi
     fi
     
@@ -4307,17 +6006,17 @@ configure_custom_provider() {
     # 参数校验
     if [ -z "$model" ]; then
         log_error "模型名称不能为空"
-        return 0
+        return 1
     fi
     
     if [ -z "$api_key" ]; then
         log_error "API Key 不能为空"
-        return 0
+        return 1
     fi
     
     if [ -z "$base_url" ]; then
         log_error "API 地址不能为空"
-        return 0
+        return 1
     fi
     
     log_info "配置自定义 Provider..."
@@ -4562,6 +6261,383 @@ print('Custom provider configured: ' + vars['provider_id'])
 
 # ================================ 高级设置 ================================
 
+ensure_auto_fix_openclaw_ready() {
+    if ! command -v git &> /dev/null; then
+        log_error "未检测到 git，无法同步 auto-fix-openclaw"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$AUTO_FIX_OPENCLAW_DIR")"
+
+    if [ -d "$AUTO_FIX_OPENCLAW_DIR/.git" ]; then
+        log_info "检测到 auto-fix-openclaw，本地路径: $AUTO_FIX_OPENCLAW_DIR"
+        if [ -n "$(git -C "$AUTO_FIX_OPENCLAW_DIR" status --porcelain 2>/dev/null)" ]; then
+            log_warn "auto-fix-openclaw 存在本地改动，跳过自动 pull"
+        else
+            log_info "正在更新 auto-fix-openclaw..."
+            git -C "$AUTO_FIX_OPENCLAW_DIR" pull --ff-only > /dev/null 2>&1 || log_warn "自动更新失败，可稍后手动更新"
+        fi
+    elif [ -d "$AUTO_FIX_OPENCLAW_DIR" ]; then
+        log_warn "目录存在但不是 git 仓库: $AUTO_FIX_OPENCLAW_DIR"
+    else
+        log_info "正在克隆 auto-fix-openclaw..."
+        if ! git clone --depth 1 "$AUTO_FIX_OPENCLAW_REPO_URL" "$AUTO_FIX_OPENCLAW_DIR"; then
+            log_warn "主仓库克隆失败，尝试镜像源..."
+            rm -rf "$AUTO_FIX_OPENCLAW_DIR" 2>/dev/null || true
+            if ! git clone --depth 1 "$AUTO_FIX_OPENCLAW_REPO_MIRROR_URL" "$AUTO_FIX_OPENCLAW_DIR"; then
+                log_error "克隆失败: $AUTO_FIX_OPENCLAW_REPO_URL"
+                log_error "镜像也失败: $AUTO_FIX_OPENCLAW_REPO_MIRROR_URL"
+                return 1
+            fi
+        fi
+    fi
+
+    if [ -f "$AUTO_FIX_OPENCLAW_BIN" ] && [ ! -x "$AUTO_FIX_OPENCLAW_BIN" ]; then
+        chmod +x "$AUTO_FIX_OPENCLAW_BIN" 2>/dev/null || true
+    fi
+
+    if [ ! -x "$AUTO_FIX_OPENCLAW_BIN" ]; then
+        log_error "未找到可执行文件: $AUTO_FIX_OPENCLAW_BIN"
+        return 1
+    fi
+
+    log_info "auto-fix-openclaw 已就绪"
+    return 0
+}
+
+run_auto_fix_openclaw_cmd() {
+    if ! ensure_auto_fix_openclaw_ready; then
+        return 1
+    fi
+
+    AUTO_FIX_OPENCLAW_CODEX_BIN="${AUTO_FIX_OPENCLAW_CODEX_BIN:-$(command -v codex || true)}" \
+    AUTO_FIX_OPENCLAW_CLAUDE_CODE_BIN="${AUTO_FIX_OPENCLAW_CLAUDE_CODE_BIN:-$(command -v claude || command -v claude-code || true)}" \
+    "$AUTO_FIX_OPENCLAW_BIN" "$@"
+}
+
+check_codex_ready() {
+    if ! command -v codex &> /dev/null; then
+        log_error "未检测到 codex CLI。请先安装 Codex CLI。"
+        echo "  安装后执行: codex login"
+        return 1
+    fi
+
+    if ! codex login status > /dev/null 2>&1; then
+        log_error "Codex CLI 未完成登录配置。"
+        echo "  请先执行: codex login"
+        return 1
+    fi
+
+    return 0
+}
+
+run_auto_fix_provider_repair() {
+    local provider="$1"
+
+    # AI 修复统一要求：Codex 已安装且已登录（作为主修复/兜底引擎）
+    if ! check_codex_ready; then
+        return 1
+    fi
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装，无法执行修复"
+        return 1
+    fi
+
+    case "$provider" in
+        codex)
+            if ! command -v codex &> /dev/null; then
+                log_error "未检测到 codex CLI，请先安装并登录"
+                return 1
+            fi
+            ;;
+        claudecode)
+            if ! command -v claude &> /dev/null && ! command -v claude-code &> /dev/null; then
+                log_error "未检测到 claude CLI，请先安装并登录"
+                return 1
+            fi
+            ;;
+    esac
+
+    local force_flag=""
+    if confirm "即使当前网关健康也强制执行 AI 修复？" "n"; then
+        force_flag="--force"
+    fi
+
+    echo ""
+    log_info "将自动读取错误日志摘要，并向 ${provider} CLI 发起修复请求..."
+    log_info "执行修复: auto-fix-openclaw repair-now --provider $provider"
+    if [ -n "$force_flag" ]; then
+        run_auto_fix_openclaw_cmd repair-now --provider "$provider" --source installer-menu "$force_flag"
+    else
+        run_auto_fix_openclaw_cmd repair-now --provider "$provider" --source installer-menu
+    fi
+}
+
+choose_auto_fix_repair_provider() {
+    echo ""
+    echo -e "${WHITE}选择修复引擎${NC}"
+    print_divider
+    print_menu_item "1" "Codex CLI" "🤖"
+    print_menu_item "2" "Claude CLI" "🧠"
+    print_menu_item "0" "取消" "↩️"
+    echo ""
+    echo -en "${YELLOW}请选择 [0-2]: ${NC}"
+    read provider_choice < "$TTY_INPUT"
+
+    case "$provider_choice" in
+        1)
+            run_auto_fix_provider_repair codex
+            ;;
+        2)
+            run_auto_fix_provider_repair claudecode
+            ;;
+        0)
+            return 0
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+ai_auto_fix_menu() {
+    clear_screen
+    print_header
+
+    echo -e "${WHITE}🛠️ AI 自动修复 OpenClaw${NC}"
+    print_divider
+    echo ""
+    echo -e "${GRAY}集成 auto-fix-openclaw，可调用 Codex/Claude CLI 执行修复${NC}"
+    echo -e "${GRAY}仓库: ${AUTO_FIX_OPENCLAW_REPO_URL}${NC}"
+    echo -e "${GRAY}路径: ${AUTO_FIX_OPENCLAW_DIR}${NC}"
+    echo -e "${YELLOW}前置要求: 已安装并配置 Codex CLI（codex login）。${NC}"
+    echo -e "${GRAY}执行 AI 修复时会自动读取错误日志摘要并发送修复请求。${NC}"
+    echo ""
+
+    print_menu_item "1" "同步/安装 auto-fix-openclaw" "📦"
+    print_menu_item "2" "查看 auto-fix 状态" "📊"
+    print_menu_item "3" "采集诊断 (doctor-dry-run)" "🧪"
+    print_menu_item "4" "执行单次巡检 (run-once)" "🔁"
+    print_menu_item "5" "执行 AI 修复（选择 Claude/Codex）" "🛠️"
+    print_menu_item "0" "返回上级菜单" "↩️"
+    echo ""
+
+    echo -en "${YELLOW}请选择 [0-5]: ${NC}"
+    read choice < "$TTY_INPUT"
+
+    case "$choice" in
+        1)
+            ensure_auto_fix_openclaw_ready
+            ;;
+        2)
+            run_auto_fix_openclaw_cmd status
+            ;;
+        3)
+            run_auto_fix_openclaw_cmd doctor-dry-run
+            ;;
+        4)
+            run_auto_fix_openclaw_cmd run-once --source installer-menu
+            ;;
+        5)
+            choose_auto_fix_repair_provider
+            ;;
+        0)
+            return
+            ;;
+        *)
+            log_error "无效选择"
+            ;;
+    esac
+
+    press_enter
+    ai_auto_fix_menu
+}
+
+backup_runtime_config_for_upgrade() {
+    local backup_root="$HOME/.openclaw-upgrade-backups"
+    mkdir -p "$backup_root"
+    local backup_path="$backup_root/pre_upgrade_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$backup_path"
+    
+    if [ -d "$CONFIG_DIR" ]; then
+        cp -R "$CONFIG_DIR" "$backup_path/config_snapshot" 2>/dev/null || {
+            log_error "创建升级备份失败"
+            return 1
+        }
+    fi
+    
+    echo "$backup_path"
+    return 0
+}
+
+restore_runtime_config_backup() {
+    local backup_path="$1"
+    if [ -z "$backup_path" ] || [ ! -d "$backup_path" ]; then
+        log_error "备份目录无效，无法恢复"
+        return 1
+    fi
+    if [ ! -d "$backup_path/config_snapshot" ]; then
+        log_error "备份快照不存在，无法恢复: $backup_path/config_snapshot"
+        return 1
+    fi
+    
+    mkdir -p "$CONFIG_DIR"
+    cp -R "$backup_path/config_snapshot/." "$CONFIG_DIR/" 2>/dev/null || {
+        log_error "恢复配置备份失败: $backup_path"
+        return 1
+    }
+    
+    log_info "已恢复配置备份: $backup_path"
+    return 0
+}
+
+run_openclaw_upgrade_pipeline() {
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
+        return 1
+    fi
+    
+    local before_version
+    before_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    log_info "当前版本: $before_version"
+    
+    local upgrade_log="$BACKUP_DIR/upgrade_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$BACKUP_DIR"
+    {
+        echo "=== OpenClaw Upgrade Log ==="
+        echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Before Version: $before_version"
+    } >> "$upgrade_log"
+    
+    local backup_path
+    backup_path=$(backup_runtime_config_for_upgrade) || return 1
+    log_info "升级备份: $backup_path"
+    echo "Backup Path: $backup_path" >> "$upgrade_log"
+    
+    local update_output=""
+    local updated=false
+    
+    # 官方推荐升级命令
+    if update_output=$(openclaw update --restart 2>&1); then
+        updated=true
+        log_info "OpenClaw 核心升级成功（openclaw update --restart）"
+        {
+            echo ""
+            echo "[core-update] openclaw update --restart"
+            echo "$update_output"
+        } >> "$upgrade_log"
+    else
+        log_warn "openclaw update --restart 失败，尝试 npm 回退升级"
+        echo "$update_output" | head -8 | sed 's/^/  /'
+        {
+            echo ""
+            echo "[core-update-failed] openclaw update --restart"
+            echo "$update_output"
+        } >> "$upgrade_log"
+        
+        if update_output=$(npm update -g openclaw 2>&1); then
+            updated=true
+            log_warn "已使用 npm update -g openclaw 完成回退升级"
+            {
+                echo ""
+                echo "[core-update-fallback] npm update -g openclaw"
+                echo "$update_output"
+            } >> "$upgrade_log"
+        else
+            log_error "核心升级失败"
+            echo "$update_output" | head -8 | sed 's/^/  /'
+            {
+                echo ""
+                echo "[core-update-fallback-failed] npm update -g openclaw"
+                echo "$update_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+    fi
+    
+    if [ "$updated" != true ]; then
+        log_error "升级状态未知，已中止"
+        restore_runtime_config_backup "$backup_path" || true
+        return 1
+    fi
+    
+    # 升级后按官方链路执行 doctor
+    log_info "运行 doctor 迁移与修复..."
+    local doctor_output=""
+    if openclaw doctor --help 2>/dev/null | grep -q -- "--non-interactive"; then
+        if ! doctor_output=$(openclaw doctor --non-interactive 2>&1); then
+            log_error "doctor 失败"
+            {
+                echo ""
+                echo "[doctor-failed] openclaw doctor --non-interactive"
+                echo "$doctor_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+        {
+            echo ""
+            echo "[doctor] openclaw doctor --non-interactive"
+            echo "$doctor_output"
+        } >> "$upgrade_log"
+    else
+        if ! doctor_output=$(yes | openclaw doctor --fix 2>&1); then
+            log_error "doctor --fix 失败"
+            {
+                echo ""
+                echo "[doctor-failed] yes | openclaw doctor --fix"
+                echo "$doctor_output"
+            } >> "$upgrade_log"
+            restore_runtime_config_backup "$backup_path" || true
+            return 1
+        fi
+        {
+            echo ""
+            echo "[doctor] yes | openclaw doctor --fix"
+            echo "$doctor_output"
+        } >> "$upgrade_log"
+    fi
+    
+    # 升级后统一更新插件
+    log_info "更新插件..."
+    local plugins_output=""
+    if ! plugins_output=$(openclaw plugins update --all 2>&1); then
+        log_warn "plugins update --all 执行失败，请稍后手动执行"
+        {
+            echo ""
+            echo "[plugins-update-failed] openclaw plugins update --all"
+            echo "$plugins_output"
+        } >> "$upgrade_log"
+    else
+        {
+            echo ""
+            echo "[plugins-update] openclaw plugins update --all"
+            echo "$plugins_output"
+        } >> "$upgrade_log"
+    fi
+    
+    # 健康检查
+    if openclaw health >/dev/null 2>&1; then
+        log_info "健康检查通过"
+    else
+        log_warn "健康检查未通过，请运行 openclaw health / openclaw logs 排查"
+    fi
+    
+    local after_version
+    after_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    log_info "升级完成: $before_version -> $after_version"
+    {
+        echo ""
+        echo "After Version: $after_version"
+        echo "Result: success"
+    } >> "$upgrade_log"
+    log_info "升级日志: $upgrade_log"
+    return 0
+}
+
 advanced_settings() {
     clear_screen
     print_header
@@ -4577,10 +6653,11 @@ advanced_settings() {
     print_menu_item "5" "清理日志" "🧹"
     print_menu_item "6" "更新 OpenClaw" "⬆️"
     print_menu_item "7" "卸载 OpenClaw" "🗑️"
+    print_menu_item "8" "AI 自动修复 OpenClaw" "🛠️"
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
     
-    echo -en "${YELLOW}请选择 [0-7]: ${NC}"
+    echo -en "${YELLOW}请选择 [0-8]: ${NC}"
     read choice < "$TTY_INPUT"
     
     case $choice in
@@ -4622,7 +6699,7 @@ advanced_settings() {
             ;;
         5)
             if confirm "确定要清理日志吗？" "n"; then
-                if command -v openclaw &> /dev/null; then
+                if check_openclaw_installed; then
                     openclaw logs clear 2>/dev/null || log_warn "OpenClaw 日志清理命令不可用"
                 fi
                 rm -f /tmp/openclaw-gateway.log 2>/dev/null
@@ -4631,19 +6708,16 @@ advanced_settings() {
             ;;
         6)
             echo ""
-            log_info "正在更新 OpenClaw..."
-            npm update -g openclaw
-            log_info "更新完成"
+            log_info "正在执行官方升级链路（core + doctor + plugins）..."
+            run_openclaw_upgrade_pipeline
             ;;
         7)
-            if confirm "确定要卸载 OpenClaw 吗？" "n"; then
-                npm uninstall -g openclaw
-                if confirm "是否同时删除配置文件？" "n"; then
-                    rm -rf "$CONFIG_DIR"
-                fi
-                log_info "OpenClaw 已卸载"
-                exit 0
-            fi
+            openclaw_uninstall_menu
+            advanced_settings
+            return
+            ;;
+        8)
+            ai_auto_fix_menu
             ;;
         0)
             return
@@ -4808,60 +6882,50 @@ quick_test_ai() {
     echo -e "${WHITE}🤖 测试 AI API 连接${NC}"
     print_divider
     echo ""
-    
-    # 从环境变量文件读取配置
-    if [ ! -f "$OPENCLAW_ENV" ]; then
-        log_error "AI 模型尚未配置，请先完成配置"
+
+    if ! check_openclaw_installed; then
+        log_error "OpenClaw 未安装"
         press_enter
         quick_test_menu
         return
     fi
     
-    source "$OPENCLAW_ENV"
+    # 读取环境变量（如果存在）
+    [ -f "$OPENCLAW_ENV" ] && source "$OPENCLAW_ENV"
     
     local provider=""
     local api_key=""
     local base_url=""
     local model=""
     
-    # 确定 provider
-    if [ -n "$ANTHROPIC_API_KEY" ]; then
-        provider="anthropic"
-        api_key="$ANTHROPIC_API_KEY"
-        base_url="$ANTHROPIC_BASE_URL"
-    elif [ -n "$OPENAI_API_KEY" ]; then
-        provider="openai"
-        api_key="$OPENAI_API_KEY"
-        base_url="$OPENAI_BASE_URL"
-    elif [ -n "$GOOGLE_API_KEY" ]; then
-        provider="google"
-        api_key="$GOOGLE_API_KEY"
-        base_url="$GOOGLE_BASE_URL"
-    elif [ -n "$GROQ_API_KEY" ]; then
-        provider="groq"
-        api_key="$GROQ_API_KEY"
-        base_url="$GROQ_BASE_URL"
-    elif [ -n "$MISTRAL_API_KEY" ]; then
-        provider="mistral"
-        api_key="$MISTRAL_API_KEY"
-        base_url="$MISTRAL_BASE_URL"
-    elif [ -n "$OPENROUTER_API_KEY" ]; then
-        provider="openrouter"
-        api_key="$OPENROUTER_API_KEY"
-        base_url="$OPENROUTER_BASE_URL"
-    fi
-    
-    if [ -z "$provider" ] || [ -z "$api_key" ]; then
-        log_error "AI 模型尚未配置，请先完成配置"
+    local model_ref=""
+    model_ref="$(get_current_model_ref || true)"
+    if [ -z "$model_ref" ]; then
+        log_error "未检测到已生效默认模型，请先完成模型配置"
         press_enter
         quick_test_menu
         return
     fi
-    
-    # 获取当前模型
-    if check_openclaw_installed; then
-        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
-    fi
+
+    provider="${model_ref%%/*}"
+    model="${model_ref#*/}"
+
+    # 按 provider 尝试读取对应 key（若为空也允许，因为可能使用 auth profile）
+    case "$provider" in
+        anthropic) api_key="$ANTHROPIC_API_KEY"; base_url="$ANTHROPIC_BASE_URL" ;;
+        openai) api_key="$OPENAI_API_KEY"; base_url="$OPENAI_BASE_URL" ;;
+        deepseek) api_key="$DEEPSEEK_API_KEY"; base_url="$DEEPSEEK_BASE_URL" ;;
+        moonshot|kimi) api_key="$MOONSHOT_API_KEY"; base_url="$MOONSHOT_BASE_URL" ;;
+        google|google-gemini-cli|google-antigravity) api_key="$GOOGLE_API_KEY"; base_url="$GOOGLE_BASE_URL" ;;
+        openrouter) api_key="$OPENROUTER_API_KEY"; base_url="$OPENROUTER_BASE_URL" ;;
+        groq) api_key="$GROQ_API_KEY"; base_url="$GROQ_BASE_URL" ;;
+        mistral) api_key="$MISTRAL_API_KEY"; base_url="$MISTRAL_BASE_URL" ;;
+        xai) api_key="$XAI_API_KEY" ;;
+        zai) api_key="$ZAI_API_KEY" ;;
+        minimax|minimax-cn|minimax-portal) api_key="$MINIMAX_API_KEY" ;;
+        opencode|opencode-zen|opencode-go) api_key="$OPENCODE_API_KEY" ;;
+        ollama|lmstudio) api_key="local-runtime" ;;
+    esac
     
     echo -e "当前配置:"
     echo -e "  提供商: ${WHITE}$provider${NC}"
@@ -4939,7 +7003,7 @@ quick_test_slack() {
     echo -e "${CYAN}请输入 Slack Bot Token 进行测试:${NC}"
     echo ""
     
-    read -p "$(echo -e "${YELLOW}Bot Token (xoxb-...): ${NC}")" bot_token
+    read_secret_input "${YELLOW}Bot Token (xoxb-...): ${NC}" bot_token
     
     if [ -z "$bot_token" ]; then
         log_error "Token 不能为空"
@@ -4971,13 +7035,13 @@ quick_test_feishu() {
             app_id=$(node -e "
 try {
     const config = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON', 'utf8'));
-    console.log(config.channels?.feishu?.appId || '');
+    console.log(config.channels?.feishu?.accounts?.main?.appId || config.channels?.feishu?.appId || '');
 } catch (e) { console.log(''); }
 " 2>/dev/null)
             app_secret=$(node -e "
 try {
     const config = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON', 'utf8'));
-    console.log(config.channels?.feishu?.appSecret || '');
+    console.log(config.channels?.feishu?.accounts?.main?.appSecret || config.channels?.feishu?.appSecret || '');
 } catch (e) { console.log(''); }
 " 2>/dev/null)
         elif command -v python3 &> /dev/null; then
@@ -4986,7 +7050,8 @@ import json
 try:
     with open('$OPENCLAW_JSON', 'r') as f:
         config = json.load(f)
-    print(config.get('channels', {}).get('feishu', {}).get('appId', ''))
+    feishu = config.get('channels', {}).get('feishu', {})
+    print(feishu.get('accounts', {}).get('main', {}).get('appId', feishu.get('appId', '')))
 except: print('')
 " 2>/dev/null)
             app_secret=$(python3 -c "
@@ -4994,7 +7059,8 @@ import json
 try:
     with open('$OPENCLAW_JSON', 'r') as f:
         config = json.load(f)
-    print(config.get('channels', {}).get('feishu', {}).get('appSecret', ''))
+    feishu = config.get('channels', {}).get('feishu', {})
+    print(feishu.get('accounts', {}).get('main', {}).get('appSecret', feishu.get('appSecret', '')))
 except: print('')
 " 2>/dev/null)
         fi
@@ -5009,8 +7075,7 @@ except: print('')
         echo ""
         echo -en "${YELLOW}App ID: ${NC}"
         read app_id < "$TTY_INPUT"
-        echo -en "${YELLOW}App Secret: ${NC}"
-        read app_secret < "$TTY_INPUT"
+            read_secret_input "${YELLOW}App Secret: ${NC}" app_secret
         
         if [ -z "$app_id" ] || [ -z "$app_secret" ]; then
             log_error "App ID 和 App Secret 不能为空"
@@ -5117,58 +7182,43 @@ run_all_tests() {
     local api_key=""
     local base_url=""
     local model=""
-    
-    if [ -n "$ANTHROPIC_API_KEY" ]; then
-        provider="anthropic"
-        api_key="$ANTHROPIC_API_KEY"
-        base_url="$ANTHROPIC_BASE_URL"
-    elif [ -n "$OPENAI_API_KEY" ]; then
-        provider="openai"
-        api_key="$OPENAI_API_KEY"
-        base_url="$OPENAI_BASE_URL"
-    elif [ -n "$GOOGLE_API_KEY" ]; then
-        provider="google"
-        api_key="$GOOGLE_API_KEY"
-    fi
-    
-    # 获取当前模型
+    local model_ref=""
+
     if check_openclaw_installed; then
-        model=$(openclaw config get models.default 2>/dev/null | sed 's|.*/||')
+        model_ref="$(get_current_model_ref || true)"
     fi
+    if [ -n "$model_ref" ]; then
+        provider="${model_ref%%/*}"
+        model="${model_ref#*/}"
+    fi
+
+    case "$provider" in
+        anthropic) api_key="$ANTHROPIC_API_KEY"; base_url="$ANTHROPIC_BASE_URL" ;;
+        openai) api_key="$OPENAI_API_KEY"; base_url="$OPENAI_BASE_URL" ;;
+        deepseek) api_key="$DEEPSEEK_API_KEY"; base_url="$DEEPSEEK_BASE_URL" ;;
+        moonshot|kimi) api_key="$MOONSHOT_API_KEY"; base_url="$MOONSHOT_BASE_URL" ;;
+        google|google-gemini-cli|google-antigravity) api_key="$GOOGLE_API_KEY"; base_url="$GOOGLE_BASE_URL" ;;
+        openrouter) api_key="$OPENROUTER_API_KEY"; base_url="$OPENROUTER_BASE_URL" ;;
+        groq) api_key="$GROQ_API_KEY"; base_url="$GROQ_BASE_URL" ;;
+        mistral) api_key="$MISTRAL_API_KEY"; base_url="$MISTRAL_BASE_URL" ;;
+        xai) api_key="$XAI_API_KEY" ;;
+        zai) api_key="$ZAI_API_KEY" ;;
+        minimax|minimax-cn|minimax-portal) api_key="$MINIMAX_API_KEY" ;;
+        opencode|opencode-go|opencode-zen) api_key="$OPENCODE_API_KEY" ;;
+        ollama|lmstudio) api_key="local-runtime" ;;
+    esac
     
-    if [ -n "$provider" ] && [ -n "$api_key" ] && [ "$api_key" != "your-api-key-here" ]; then
+    if [ -n "$provider" ]; then
         total_tests=$((total_tests + 1))
-        echo -e "${CYAN}[测试 $total_tests] AI API ($provider)${NC}"
-        
-        local test_url=""
-        local http_code=""
-        
-        case "$provider" in
-            anthropic)
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.anthropic.com/v1/messages" \
-                    -H "x-api-key: $api_key" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
-                    -d '{"model":"'$model'","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
-                ;;
-            google)
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                    "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$api_key" \
-                    -H "Content-Type: application/json" -d '{"contents":[{"parts":[{"text":"hi"}]}]}' 2>/dev/null)
-                ;;
-            *)
-                test_url="${base_url:-https://api.openai.com/v1}/chat/completions"
-                http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$test_url" \
-                    -H "Authorization: Bearer $api_key" -H "Content-Type: application/json" \
-                    -d '{"model":"'$model'","messages":[{"role":"user","content":"hi"}],"max_tokens":10}' 2>/dev/null)
-                ;;
-        esac
-        
-        if [ "$http_code" = "200" ]; then
-            log_info "AI API 测试通过"
+        echo -e "${CYAN}[测试 $total_tests] AI API ($provider / $model)${NC}"
+        if test_ai_connection "$provider" "$api_key" "$model" "$base_url"; then
             passed_tests=$((passed_tests + 1))
         else
-            log_error "AI API 测试失败 (HTTP $http_code)"
+            log_error "AI API 测试失败"
         fi
         echo ""
+    else
+        log_warn "未检测到默认模型，跳过 AI API 测试"
     fi
     
     # 渠道测试提示
@@ -5239,12 +7289,32 @@ main() {
     # 确保配置目录存在
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$BACKUP_DIR"
+
+    # 快捷模式：安装脚本可直接跳转到指定配置页
+    case "${1:-}" in
+        --model-only)
+            config_ai_model
+            echo ""
+            echo -e "${CYAN}模型配置流程结束。${NC}"
+            exit 0
+            ;;
+        --channels-only)
+            config_channels
+            echo ""
+            echo -e "${CYAN}消息渠道配置流程结束。${NC}"
+            exit 0
+            ;;
+    esac
     
     # 主循环
     while true; do
         show_main_menu
         echo -en "${YELLOW}请选择 [0-9]: ${NC}"
-        read choice < "$TTY_INPUT"
+        if ! read choice < "$TTY_INPUT"; then
+            echo ""
+            log_error "无法读取输入（TTY 不可用），退出配置菜单。"
+            exit 1
+        fi
         
         case $choice in
             1) show_status ;;
