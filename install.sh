@@ -1502,6 +1502,9 @@ EOF
         ollama)
             echo "export OLLAMA_HOST=${BASE_URL:-http://localhost:11434}" >> "$env_file"
             ;;
+        novita)
+            echo "export NOVITA_API_KEY=$AI_KEY" >> "$env_file"
+            echo "export NOVITA_BASE_URL=${BASE_URL:-https://api.novita.ai/openai}" >> "$env_file"
         xai)
             echo "export XAI_API_KEY=$AI_KEY" >> "$env_file"
             ;;
@@ -1576,6 +1579,8 @@ EOF
                 ollama)
                     openclaw_model="ollama/$AI_MODEL"
                     ;;
+                novita)
+                    openclaw_model="novita/$AI_MODEL"
                 xai)
                     openclaw_model="xai/$AI_MODEL"
                     ;;
@@ -2070,6 +2075,16 @@ setup_ai_provider() {
     echo -e "${WHITE}  第 1 步: 选择 AI 模型提供商${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+    echo "  1) 🟣 Anthropic Claude"
+    echo "  2) 🟢 OpenAI GPT"
+    echo "  3) 🔵 DeepSeek"
+    echo "  4) 🌙 Kimi (Moonshot)"
+    echo "  5) 🔴 Google Gemini"
+    echo "  6) 🔄 OpenRouter (多模型网关)"
+    echo "  7) ⚡ Groq (超快推理)"
+    echo "  8) 🌬️ Mistral AI"
+    echo "  9) 🟠 Ollama (本地模型)"
+    echo "  10) 🚀 Novita AI (Kimi/DeepSeek/GLM)"
     echo "  1)  🟣 Anthropic Claude"
     echo "  2)  🟢 OpenAI GPT"
     echo "  3)  🔵 DeepSeek"
@@ -2334,6 +2349,25 @@ setup_ai_provider() {
             esac
             ;;
         10)
+            AI_PROVIDER="novita"
+            echo ""
+            echo -e "${CYAN}配置 Novita AI${NC}"
+            echo -e "${GRAY}获取 API Key: https://novita.ai/${NC}"
+            echo ""
+            echo -en "${YELLOW}输入 API Key: ${NC}"; read AI_KEY < "$TTY_INPUT"
+            BASE_URL="https://api.novita.ai/openai"
+            echo ""
+            echo "选择模型:"
+            echo "  1) moonshotai/kimi-k2.5 (推荐)"
+            echo "  2) deepseek/deepseek-v3.2"
+            echo "  3) zai-org/glm-5"
+            echo "  4) 自定义"
+            echo -en "${YELLOW}选择模型 [1-4] (默认: 1): ${NC}"; read model_choice < "$TTY_INPUT"
+            case $model_choice in
+                2) AI_MODEL="deepseek/deepseek-v3.2" ;;
+                3) AI_MODEL="zai-org/glm-5" ;;
+                4) echo -en "${YELLOW}输入模型名称: ${NC}"; read AI_MODEL < "$TTY_INPUT" ;;
+                *) AI_MODEL="moonshotai/kimi-k2.5" ;;
             AI_PROVIDER="xai"
             BASE_URL=""
             echo ""

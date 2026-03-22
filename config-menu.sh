@@ -1475,12 +1475,15 @@ config_ai_model() {
     print_menu_item "15" "Google Gemini CLI" "🧪"
     print_menu_item "16" "Google Antigravity" "🚀"
     echo ""
+    echo -e "${WHITE}高性能推理:${NC}"
+    print_menu_item "17" "Novita AI (Kimi/DeepSeek/GLM)" "🚀"
+    echo ""
     print_menu_item "0" "返回主菜单" "↩️"
     echo ""
-    
-    echo -en "${YELLOW}请选择 [0-16]: ${NC}"
+
+    echo -en "${YELLOW}请选择 [0-17]: ${NC}"
     read choice < "$TTY_INPUT"
-    
+
     case $choice in
         1) config_anthropic ;;
         2) config_openai ;;
@@ -1498,6 +1501,7 @@ config_ai_model() {
         14) config_minimax ;;
         15) config_google_gemini_cli ;;
         16) config_google_antigravity ;;
+        17) config_novita ;;
         0) return ;;
         *) log_error "无效选择"; press_enter; config_ai_model ;;
     esac
@@ -3024,6 +3028,103 @@ config_opencode() {
         test_ai_connection "$provider" "$api_key" "$model" ""
     fi
     
+    press_enter
+}
+
+config_novita() {
+    clear_screen
+    print_header
+
+    echo -e "${WHITE}🚀 配置 Novita AI${NC}"
+    print_divider
+    echo ""
+
+    # 获取当前配置
+    local current_key=$(get_env_value "NOVITA_API_KEY")
+    local official_url="https://api.novita.ai/openai"
+
+    # 显示当前配置
+    echo -e "${CYAN}Novita AI 是高性能 OpenAI 兼容推理平台，提供 Kimi、DeepSeek、GLM 等主流模型${NC}"
+    echo ""
+    echo -e "${CYAN}当前配置:${NC}"
+    if [ -n "$current_key" ]; then
+        local masked_key="${current_key:0:8}...${current_key: -4}"
+        echo -e "  API Key: ${WHITE}$masked_key${NC}"
+    else
+        echo -e "  API Key: ${GRAY}(未配置)${NC}"
+    fi
+    echo ""
+
+    echo -e "${CYAN}官方 API: ${WHITE}$official_url${NC}"
+    echo -e "${GRAY}获取 Key: https://novita.ai/${NC}"
+    echo ""
+    print_divider
+    echo ""
+
+    # 询问配置模式
+    echo -e "${YELLOW}选择配置模式:${NC}"
+    print_menu_item "1" "仅更改模型 (保留当前 API Key)" "🔄"
+    print_menu_item "2" "完整配置 (可修改 API Key)" "⚙️"
+    echo ""
+    read -p "$(echo -e "${YELLOW}请选择 [1-2] (默认: 1): ${NC}")" config_mode < "$TTY_INPUT"
+    config_mode=${config_mode:-1}
+
+    local api_key="$current_key"
+
+    if [ "$config_mode" = "2" ]; then
+        echo ""
+        if [ -n "$current_key" ]; then
+            local masked_key="${current_key:0:8}...${current_key: -4}"
+            echo -e "当前 API Key: ${GRAY}$masked_key${NC}"
+        fi
+
+        read -p "$(echo -e "${YELLOW}输入 API Key (留空保持不变): ${NC}")" input_key < "$TTY_INPUT"
+
+        if [ -n "$input_key" ]; then
+            api_key="$input_key"
+        fi
+    fi
+
+    # 验证 API Key
+    if [ -z "$api_key" ]; then
+        log_error "API Key 不能为空，请先配置 API Key"
+        press_enter
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}选择模型:${NC}"
+    echo ""
+    print_menu_item "1" "moonshotai/kimi-k2.5 (推荐)" "⭐"
+    print_menu_item "2" "deepseek/deepseek-v3.2" "🔵"
+    print_menu_item "3" "zai-org/glm-5" "🇨🇳"
+    print_menu_item "4" "自定义模型名称" "✏️"
+    echo ""
+
+    read -p "$(echo -e "${YELLOW}请选择 [1-4] (默认: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    model_choice=${model_choice:-1}
+
+    case $model_choice in
+        1) model="moonshotai/kimi-k2.5" ;;
+        2) model="deepseek/deepseek-v3.2" ;;
+        3) model="zai-org/glm-5" ;;
+        4) read -p "$(echo -e "${YELLOW}输入模型名称: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="moonshotai/kimi-k2.5" ;;
+    esac
+
+    # 保存到 OpenClaw 环境变量配置
+    save_openclaw_ai_config "novita" "$api_key" "$model" ""
+
+    echo ""
+    log_info "Novita AI 配置完成！"
+    log_info "模型: $model"
+
+    # 询问是否测试
+    echo ""
+    if confirm "是否测试 API 连接？" "y"; then
+        test_ai_connection "novita" "$api_key" "$model" ""
+    fi
+
     press_enter
 }
 
@@ -5772,8 +5873,12 @@ EOF
         opencode|opencode-go)
             echo "export OPENCODE_API_KEY=$api_key" >> "$env_file"
             ;;
+        novita)
+            echo "export NOVITA_API_KEY=$api_key" >> "$env_file"
+            echo "export NOVITA_BASE_URL=https://api.novita.ai/openai" >> "$env_file"
+            ;;
     esac
-    
+
     chmod 600 "$env_file"
 
     if [ "$provider" = "minimax" ] || [ "$provider" = "minimax-cn" ]; then
@@ -5847,6 +5952,9 @@ EOF
                     ;;
                 google-antigravity)
                     openclaw_model="google-antigravity/$model"
+                    ;;
+                novita)
+                    openclaw_model="novita/$model"
                     ;;
             esac
         fi
