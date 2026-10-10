@@ -1935,6 +1935,11 @@ add_env_to_shell() {
 # create_default_config 已移除 - OpenClaw 使用 openclaw.json 和环境变量
 
 run_onboard_wizard() {
+    if [ "$NO_PROMPT" = "1" ]; then
+        log_info "NO_PROMPT 模式下跳过交互式配置向导和渠道菜单，可稍后手动运行: openclaw onboard 或 bash ~/.openclaw/config-menu.sh"
+        return 0
+    fi
+
     log_step "运行配置向导..."
     
     echo ""

@@ -34,21 +34,23 @@ pass "installer compatibility markers"
 # 5) 文档命令一致性检查
 grep -q "openclaw update --restart" README.md || fail "README missing official upgrade command"
 grep -q "openclaw plugins update --all" README.md || fail "README missing plugin update command"
-grep -q "raw.githubusercontent.com/leecyno1/auto-install-Openclaw/main/install.sh" README.md || fail "README missing new one-click url"
-grep -q "mirror.ghproxy.com/https://raw.githubusercontent.com/leecyno1/auto-install-Openclaw/main/install.sh" README.md || fail "README missing mirror one-click url"
+grep -q "raw.githubusercontent.com/miaoxworld/OpenClawInstaller/main/install.sh" README.md || fail "README missing public one-click url"
+grep -q 'INSTALLER_MIRROR_RAW_URL="${OPENCLAW_INSTALLER_MIRROR_RAW_URL:-https://mirror.ghproxy.com/${GITHUB_RAW_URL}}"' install.sh || fail "install.sh missing configurable mirror fallback"
 pass "README command markers"
 
-# 6) 独立仓库命名检查（不应再指向旧仓库）
-if rg -n "miaoxworld/OpenClawInstaller|raw.githubusercontent.com/miaoxworld/OpenClawInstaller" README.md install.sh config-menu.sh docs/feishu-setup.md >/dev/null 2>&1; then
-    fail "found legacy upstream repository references"
-fi
-pass "independent repo markers"
+# 6) Public installer entrypoint and upstream asset source are intentionally distinct.
+grep -q 'GITHUB_REPO="${GITHUB_REPO:-leecyno1/auto-install-Openclaw}"' install.sh || fail "missing configured upstream asset source"
+pass "public repository and upstream source markers"
 
-# 7) 1:1 清单文档存在性检查
+# 7) Non-interactive runs must not enter the interactive onboarding/channel menu.
+grep -q 'NO_PROMPT 模式下跳过交互式配置向导和渠道菜单' install.sh || fail "--no-prompt does not skip interactive onboarding"
+pass "non-interactive onboarding marker"
+
+# 8) 1:1 清单文档存在性检查
 [ -f docs/official-compatibility-checklist.md ] || fail "missing official compatibility checklist doc"
 pass "compatibility checklist doc"
 
-# 8) auto-fix-openclaw + Claude/Codex 修复入口检查
+# 9) auto-fix-openclaw + Claude/Codex 修复入口检查
 grep -q 'AUTO_FIX_OPENCLAW_REPO_URL=' config-menu.sh || fail "missing auto-fix-openclaw repo variable"
 grep -q 'AI 自动修复 OpenClaw' config-menu.sh || fail "missing AI auto-fix menu entry"
 grep -q '执行 AI 修复（选择 Claude/Codex）' config-menu.sh || fail "missing unified AI repair entry"

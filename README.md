@@ -300,6 +300,16 @@ openclaw logs
 openclaw logs --follow
 ```
 
+### 更新 OpenClaw
+
+```bash
+# 更新 OpenClaw 核心并重启 Gateway
+openclaw update --restart
+
+# 更新已安装的插件
+openclaw plugins update --all
+```
+
 ### 配置管理
 
 ```bash
