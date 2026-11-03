@@ -2875,25 +2875,27 @@ config_minimax() {
     echo ""
     echo -e "${CYAN}选择模型:${NC}"
     echo ""
-    print_menu_item "1" "MiniMax-M3 (recommended, 1M context)" "*"
-    print_menu_item "2" "MiniMax-M2.7" "-"
-    print_menu_item "3" "MiniMax-M2.7-highspeed" ">"
-    print_menu_item "4" "MiniMax-M2.5" "-"
-    print_menu_item "5" "MiniMax-M2.5-highspeed" "-"
-    print_menu_item "6" "Custom model ID" "+"
+    print_menu_item "1" "MiniMax-M3.1-Flash (recommended, 1M context)" "*"
+    print_menu_item "2" "MiniMax-M3" "-"
+    print_menu_item "3" "MiniMax-M2.7" "-"
+    print_menu_item "4" "MiniMax-M2.7-highspeed" ">"
+    print_menu_item "5" "MiniMax-M2.5" "-"
+    print_menu_item "6" "MiniMax-M2.5-highspeed" "-"
+    print_menu_item "7" "Custom model ID" "+"
     echo ""
 
-    read -p "$(echo -e "${YELLOW}Select [1-6] (default: 1): ${NC}")" model_choice < "$TTY_INPUT"
+    read -p "$(echo -e "${YELLOW}Select [1-7] (default: 1): ${NC}")" model_choice < "$TTY_INPUT"
     model_choice=${model_choice:-1}
 
     case $model_choice in
-        1) model="MiniMax-M3" ;;
-        2) model="MiniMax-M2.7" ;;
-        3) model="MiniMax-M2.7-highspeed" ;;
-        4) model="MiniMax-M2.5" ;;
-        5) model="MiniMax-M2.5-highspeed" ;;
-        6) read -p "$(echo -e "${YELLOW}Enter model ID: ${NC}")" model < "$TTY_INPUT" ;;
-        *) model="MiniMax-M3" ;;
+        1) model="MiniMax-M3.1-Flash" ;;
+        2) model="MiniMax-M3" ;;
+        3) model="MiniMax-M2.7" ;;
+        4) model="MiniMax-M2.7-highspeed" ;;
+        5) model="MiniMax-M2.5" ;;
+        6) model="MiniMax-M2.5-highspeed" ;;
+        7) read -p "$(echo -e "${YELLOW}Enter model ID: ${NC}")" model < "$TTY_INPUT" ;;
+        *) model="MiniMax-M3.1-Flash" ;;
     esac
     
     # 保存到 OpenClaw 环境变量配置
@@ -5755,25 +5757,26 @@ cfg.models.providers ||= {};
 const p = cfg.models.providers[provider] || {};
 const models = Array.isArray(p.models) ? p.models : [];
 const catalog = {
+  'MiniMax-M3.1-Flash': {
+    name: 'MiniMax M3.1 Flash',
+    input: ['text', 'image', 'video'],
+    cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: null },
+    contextWindow: 1000000,
+    maxTokens: null,
+  },
   'MiniMax-M3': {
     name: 'MiniMax M3',
     input: ['text', 'image', 'video'],
-    cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: null },
+    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: null },
     contextWindow: 1000000,
-    maxTokens: 131072,
+    maxTokens: null,
   },
-  'MiniMax-M2.7': {
-    name: 'MiniMax M2.7',
-    input: ['text'],
-    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
-    contextWindow: 204800,
-    maxTokens: 131072,
-  },
+  'MiniMax-M2.7': { name: 'MiniMax M2.7' },
   'MiniMax-M2.5': { name: 'MiniMax M2.5' },
   'MiniMax-M2.5-highspeed': { name: 'MiniMax M2.5 Highspeed' },
 };
 const modelIndexes = new Map(models.map((entry, index) => [entry.id, index]));
-for (const id of ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed']) {
+for (const id of ['MiniMax-M3.1-Flash', 'MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed']) {
   const meta = catalog[id] || {};
   const definition = {
     id,
@@ -5782,7 +5785,9 @@ for (const id of ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.5', 'MiniMax-M2.5-hi
     input: meta.input || ['text'],
     cost: meta.cost || { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0.12 },
     contextWindow: meta.contextWindow || 200000,
-    maxTokens: meta.maxTokens || 8192
+    ...(Object.prototype.hasOwnProperty.call(meta, 'maxTokens') && meta.maxTokens === null
+      ? {}
+      : { maxTokens: meta.maxTokens || 8192 })
   };
   const index = modelIndexes.get(id);
   if (index === undefined) {
@@ -5825,33 +5830,35 @@ cfg["models"].setdefault("providers", {})
 p = cfg["models"]["providers"].get(provider, {})
 models = p.get("models", []) if isinstance(p.get("models"), list) else []
 catalog = {
+    "MiniMax-M3.1-Flash": {
+        "name": "MiniMax M3.1 Flash",
+        "input": ["text", "image", "video"],
+        "cost": {"input": 0.15, "output": 0.6, "cacheRead": 0.015, "cacheWrite": None},
+        "contextWindow": 1000000,
+        "maxTokens": None,
+    },
     "MiniMax-M3": {
         "name": "MiniMax M3",
         "input": ["text", "image", "video"],
-        "cost": {"input": 0.6, "output": 2.4, "cacheRead": 0.12, "cacheWrite": None},
+        "cost": {"input": 0.3, "output": 1.2, "cacheRead": 0.06, "cacheWrite": None},
         "contextWindow": 1000000,
-        "maxTokens": 131072,
+        "maxTokens": None,
     },
-    "MiniMax-M2.7": {
-        "name": "MiniMax M2.7",
-        "input": ["text"],
-        "cost": {"input": 0.3, "output": 1.2, "cacheRead": 0.06, "cacheWrite": 0.375},
-        "contextWindow": 204800,
-        "maxTokens": 131072,
-    },
+    "MiniMax-M2.7": {"name": "MiniMax M2.7"},
     "MiniMax-M2.5": {"name": "MiniMax M2.5"},
     "MiniMax-M2.5-highspeed": {"name": "MiniMax M2.5 Highspeed"},
 }
 model_indexes = {m.get("id"): index for index, m in enumerate(models) if isinstance(m, dict)}
-for mid in ("MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"):
+for mid in ("MiniMax-M3.1-Flash", "MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"):
     meta = catalog.get(mid, {})
     definition = {
         "id": mid, "name": meta.get("name", mid), "reasoning": True,
         "input": meta.get("input", ["text"]),
         "cost": meta.get("cost", {"input": 0.3, "output": 1.2, "cacheRead": 0.03, "cacheWrite": 0.12}),
         "contextWindow": meta.get("contextWindow", 200000),
-        "maxTokens": meta.get("maxTokens", 8192)
     }
+    if "maxTokens" not in meta or meta["maxTokens"] is not None:
+        definition["maxTokens"] = meta.get("maxTokens", 8192)
     index = model_indexes.get(mid)
     if index is None:
         model_indexes[mid] = len(models)
